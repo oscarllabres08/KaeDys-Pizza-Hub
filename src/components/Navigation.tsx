@@ -45,7 +45,7 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
             onClick={() => handleNavigation('home')}
           >
             <img
-              src="/kaedypizza.jpg"
+              src="./kaedypizza.jpg"
               alt="KaeDy's Pizza Hub"
               className="h-12 w-12 rounded-full border-2 border-yellow-400 shadow-md object-cover"
             />

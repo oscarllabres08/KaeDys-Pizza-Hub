@@ -28,7 +28,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
     <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900">
       <div className="relative h-[90vh] flex items-end justify-center bg-black pb-10">
         <img
-          src="/store.jpg"
+          src="./store.jpg"
           alt="KaeDy's Pizza Hub Store"
           className="absolute inset-0 w-full h-full object-cover opacity-90"
         />

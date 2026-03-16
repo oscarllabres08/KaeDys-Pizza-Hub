@@ -17,7 +17,7 @@ export default function AboutPage() {
           <div className="flex flex-col md:flex-row items-center gap-8 mb-12">
             <div className="md:w-1/2 flex justify-center">
               <img
-                src="/kaedypizza.jpg"
+                src="./kaedypizza.jpg"
                 alt="KaeDy's Pizza Hub"
                 className="h-40 w-40 rounded-full shadow-lg border-4 border-yellow-400 object-cover"
               />

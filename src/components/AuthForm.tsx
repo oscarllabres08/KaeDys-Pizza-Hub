@@ -55,7 +55,7 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
       <div className="max-w-md w-full bg-neutral-900 rounded-2xl shadow-2xl p-8 transform transition-all border border-yellow-500/40">
         <div className="text-center mb-8">
           <img
-            src="/kaedypizza.jpg"
+            src="./kaedypizza.jpg"
             alt="KaeDy's Pizza Hub"
             className="h-20 w-20 mx-auto rounded-full border-4 border-yellow-400 shadow-lg object-cover"
           />
