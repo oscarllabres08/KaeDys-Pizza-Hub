@@ -9,22 +9,13 @@ type MenuPageProps = {
 };
 
 export const MENU_ITEMS: MenuItem[] = [
-  {
-    id: '1',
-    name: 'Classic Pepperoni Pizza',
-    description: '12-inch hand-tossed pizza with mozzarella and loaded pepperoni.',
-    price: 349,
-    image_url: '/menu/pizza-pepperoni.jpg',
-    category: 'Pizza',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
+  
   {
     id: '2',
     name: 'All-Day Silog Plate',
     description: 'Tapsilog / Tosilog style breakfast plate with egg and garlic rice.',
     price: 95,
-    image_url: '/menu/topsilogMeal.jpg',
+    image_url: '/menu/tapsilogMeal.jpg',
     category: 'Silog Meals',
     available: true,
     created_at: new Date().toISOString(),
@@ -39,16 +30,7 @@ export const MENU_ITEMS: MenuItem[] = [
     available: true,
     created_at: new Date().toISOString(),
   },
-  {
-    id: '4',
-    name: 'Nasi Goreng Bowl',
-    description: 'Indonesian-style fried rice in Merah or Kuning with your choice of toppings.',
-    price: 85,
-    image_url: '/menu/nasi-goreng.jpg',
-    category: 'Budget Meals',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
+
   {
     id: '5',
     name: 'Budget Chicken Meal',
@@ -69,16 +51,7 @@ export const MENU_ITEMS: MenuItem[] = [
     available: true,
     created_at: new Date().toISOString(),
   },
-  {
-    id: '7',
-    name: 'Matcha Strawberry Drink',
-    description: 'Refreshing matcha-based drink with strawberry swirls and cream.',
-    price: 79,
-    image_url: '/menu/matcha-strawberry.jpg',
-    category: 'Drinks',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
+  
   {
     id: '8',
     name: 'Mais Con Yelo Overload',

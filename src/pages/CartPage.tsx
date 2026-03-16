@@ -198,7 +198,7 @@ export default function CartPage({ onNavigate }: CartPageProps) {
                   </p>
                   <div className="bg-black p-4 rounded-lg inline-block">
                     <img
-                      src="https://images.pexels.com/photos/7289715/pexels-photo-7289715.jpeg?auto=compress&cs=tinysrgb&w=400"
+                      src="/public/QR.png"
                       alt="GCash QR Code"
                     className="w-48 h-48 object-contain rounded-lg"
                     />
