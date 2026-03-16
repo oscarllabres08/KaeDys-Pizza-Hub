@@ -171,61 +171,71 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-          {filteredItems.map((item) => (
-            <div
-              key={item.id}
-              className="bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col aspect-[3/4]"
-            >
-              <button
-                type="button"
-                className="relative h-24 overflow-hidden w-full"
-                onClick={() => setPreviewItem(item)}
+          {filteredItems.map((item) => {
+            const available = isItemAvailable(item);
+            return (
+              <div
+                key={item.id}
+                className="bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col aspect-[3/4]"
               >
-                <img
-                  src={item.image_url}
-                  alt={item.name}
-                  className="w-full h-full object-cover transition-transform hover:scale-110"
-                />
-                <div className="absolute top-2 right-2 bg-yellow-400 text-black px-3 py-1 rounded-full font-bold">
-                  ₱{item.price}
-                </div>
-              </button>
-              <div className="p-3 flex-1 flex flex-col">
-                <h3 className="text-sm font-bold text-yellow-300 mb-1 line-clamp-2">
-                  {item.name}
-                </h3>
-                <p className="text-gray-300 text-xs mb-3 line-clamp-2">
-                  {item.description}
-                </p>
-                {isItemAvailable(item) ? (
-                  <button
-                    onClick={() => handleAddToCart(item)}
-                    className={`mt-auto w-full py-2 rounded-md text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
-                      addedItems.has(item.id)
-                        ? 'bg-green-500 text-white'
-                        : 'bg-yellow-400 text-black hover:bg-yellow-300'
-                    }`}
-                  >
-                    {addedItems.has(item.id) ? (
-                      <>
-                        <Check className="w-5 h-5" />
-                        Added to Cart
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="w-5 h-5" />
-                        Add to Cart
-                      </>
-                    )}
-                  </button>
-                ) : (
-                  <div className="mt-auto w-full py-2 rounded-md text-xs font-semibold text-center bg-gray-300 text-gray-700">
-                    Currently Unavailable
+                <button
+                  type="button"
+                  className="relative h-24 overflow-hidden w-full"
+                  onClick={() => setPreviewItem(item)}
+                >
+                  <img
+                    src={item.image_url}
+                    alt={item.name}
+                    className="w-full h-full object-cover transition-transform hover:scale-110"
+                  />
+                  <div className="absolute top-2 right-2 bg-yellow-400 text-black px-3 py-1 rounded-full font-bold">
+                    ₱{item.price}
                   </div>
-                )}
+                  {!available && (
+                    <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
+                      <span className="px-3 py-1 rounded-full text-[11px] font-semibold bg-gray-200 text-gray-800">
+                        Not available today
+                      </span>
+                    </div>
+                  )}
+                </button>
+                <div className="p-3 flex-1 flex flex-col">
+                  <h3 className="text-sm font-bold text-yellow-300 mb-1 line-clamp-2">
+                    {item.name}
+                  </h3>
+                  <p className="text-gray-300 text-xs mb-3 line-clamp-2">
+                    {item.description}
+                  </p>
+                  {available ? (
+                    <button
+                      onClick={() => handleAddToCart(item)}
+                      className={`mt-auto w-full py-2 rounded-md text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                        addedItems.has(item.id)
+                          ? 'bg-green-500 text-white'
+                          : 'bg-yellow-400 text-black hover:bg-yellow-300'
+                      }`}
+                    >
+                      {addedItems.has(item.id) ? (
+                        <>
+                          <Check className="w-5 h-5" />
+                          Added to Cart
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-5 h-5" />
+                          Add to Cart
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="mt-auto w-full py-2 rounded-md text-xs font-semibold text-center bg-gray-300 text-gray-700">
+                      Currently Unavailable
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         {previewItem && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
@@ -256,16 +266,22 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
                 <p className="text-gray-300 text-sm mb-4">
                   {previewItem.description}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleAddToCart(previewItem);
-                    setPreviewItem(null);
-                  }}
-                  className="w-full py-2 rounded-md text-sm font-semibold bg-yellow-400 text-black hover:bg-yellow-300 transition-all"
-                >
-                  Add to Cart
-                </button>
+                {isItemAvailable(previewItem) ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleAddToCart(previewItem);
+                      setPreviewItem(null);
+                    }}
+                    className="w-full py-2 rounded-md text-sm font-semibold bg-yellow-400 text-black hover:bg-yellow-300 transition-all"
+                  >
+                    Add to Cart
+                  </button>
+                ) : (
+                  <div className="w-full py-2 rounded-md text-xs font-semibold text-center bg-gray-300 text-gray-700">
+                    This item is currently unavailable
+                  </div>
+                )}
               </div>
             </div>
           </div>
