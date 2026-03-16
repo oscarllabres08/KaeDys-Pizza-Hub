@@ -1,4 +1,4 @@
-import { Users, Target, Heart, Award } from 'lucide-react';
+import { Users, Target, Heart } from 'lucide-react';
 
 export default function AboutPage() {
   return (
@@ -73,16 +73,7 @@ export default function AboutPage() {
               </p>
             </div>
 
-            <div className="text-center p-6 bg-neutral-900 rounded-lg border border-yellow-500/30">
-              <div className="bg-yellow-500/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Award className="w-8 h-8 text-yellow-400" />
-              </div>
-              <h3 className="text-xl font-bold mb-2 text-yellow-300">Our Awards</h3>
-              <p className="text-gray-300">
-                Recognized for excellence in quality, service, and customer
-                satisfaction since 2023.
-              </p>
-            </div>
+            {/* Removed "Our Awards" card as requested */}
           </div>
         </div>
 

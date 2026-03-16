@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pizza, Clock, Award, Heart } from 'lucide-react';
+import { Pizza, Clock, Heart } from 'lucide-react';
 import { supabase, Announcement } from '../lib/supabase';
 
 type HomePageProps = {
@@ -87,16 +87,6 @@ export default function HomePage({ onNavigate }: HomePageProps) {
             <h3 className="text-xl font-bold mb-2 text-yellow-300">Fast Delivery</h3>
             <p className="text-gray-300">
               Hot and fresh pizza delivered to your door in no time
-            </p>
-          </div>
-
-          <div className="text-center px-4 py-3 bg-neutral-900/60 rounded-lg border border-yellow-500/30">
-            <div className="bg-yellow-500/10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Award className="w-8 h-8 text-yellow-400" />
-            </div>
-            <h3 className="text-xl font-bold mb-2 text-yellow-300">Award Winning</h3>
-            <p className="text-gray-300">
-              Recognized for our exceptional quality and taste
             </p>
           </div>
 
