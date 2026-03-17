@@ -1,6 +1,7 @@
 {
   "routes": [
     { "src": "^/admin\\.html$", "status": 404 },
+    { "src": "^/kaedys-admin-dashboard/?$", "dest": "/kaedys-admin-dashboard.html" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/" }
   ]
