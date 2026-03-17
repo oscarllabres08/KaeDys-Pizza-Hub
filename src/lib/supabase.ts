@@ -5,15 +5,21 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export type UserProfile = {
+export type CustomerProfile = {
   id: string;
   full_name: string;
   phone: string;
-  address: string;
-  is_admin: boolean;
-  is_master_admin: boolean;
-  admin_approved: boolean;
+  address: string | null;
   created_at: string;
+};
+
+export type AdminProfile = {
+  id: string;
+  full_name: string;
+  email: string;
+  created_at: string;
+  is_master_admin: boolean;
+  is_active: boolean;
 };
 
 export type MenuItem = {
@@ -23,7 +29,9 @@ export type MenuItem = {
   price: number;
   image_url: string;
   category: string;
-  available: boolean;
+  custom_category?: string | null;
+  is_available: boolean;
+  display_order?: number;
   created_at: string;
 };
 

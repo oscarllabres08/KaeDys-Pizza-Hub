@@ -10,7 +10,7 @@ type NavigationProps = {
 
 export default function Navigation({ currentPage, onNavigate }: NavigationProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const { user, profile, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const { cartCount } = useCart();
 
   const publicPages = [
@@ -23,9 +23,10 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
   ];
 
   const handleSignOut = async () => {
+    if (!window.confirm('Are you sure you want to log out?')) return;
     try {
       await signOut();
-      onNavigate('home');
+      window.location.reload();
     } catch (error) {
       console.error('Error signing out:', error);
     }
@@ -100,7 +101,11 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
             {!user && (
               <button
                 onClick={() => handleNavigation('auth')}
-                className="bg-yellow-400 text-black px-4 py-2 rounded-md text-sm font-medium hover:bg-yellow-300 transition-all shadow-md"
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  currentPage === 'auth'
+                    ? 'bg-yellow-400 text-black shadow-md'
+                    : 'hover:bg-yellow-500 hover:text-black'
+                }`}
               >
                 Sign In
               </button>
@@ -132,48 +137,67 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
       </div>
 
       {isOpen && (
-        <div className="md:hidden bg-black shadow-lg animate-slideDown border-t border-yellow-500/40">
-          <div className="px-2 pt-2 pb-3 space-y-1">
-            {publicPages.map(page => (
-              <button
-                key={page.id}
-                onClick={() => handleNavigation(page.id)}
-                className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium transition-all ${
-                  currentPage === page.id
-                    ? 'bg-yellow-400 text-black'
-                    : 'hover:bg-yellow-500 hover:text-black'
-                }`}
-              >
-                {page.name}
-              </button>
-            ))}
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <button
+            type="button"
+            className="flex-1 bg-black/70 backdrop-blur-sm"
+            onClick={() => setIsOpen(false)}
+            aria-label="Close menu"
+          />
 
-            {user && (
-              <>
+          {/* Right drawer */}
+          <div className="w-64 max-w-[75vw] bg-black border-l border-yellow-500/40 shadow-2xl">
+            <div className="px-3 pt-3 pb-4 space-y-1">
+              {publicPages.map((page) => (
                 <button
-                  onClick={() => handleNavigation('profile')}
-                  className="block w-full text-left px-3 py-2 rounded-md text-base font-medium hover:bg-yellow-500 hover:text-black transition-all"
+                  key={page.id}
+                  onClick={() => handleNavigation(page.id)}
+                  className={`block w-full text-left px-3 py-2 rounded-lg text-base font-semibold transition-all ${
+                    currentPage === page.id
+                      ? 'bg-yellow-400 text-black'
+                      : 'text-yellow-300 hover:bg-yellow-500 hover:text-black'
+                  }`}
                 >
-                  My Profile
+                  {page.name}
                 </button>
+              ))}
 
-                <button
-                  onClick={handleSignOut}
-                  className="block w-full text-left px-3 py-2 rounded-md text-base font-medium hover:bg-yellow-500 hover:text-black transition-all"
-                >
-                  Sign Out
-                </button>
-              </>
-            )}
+              {user && (
+                <>
+                  <div className="my-2 border-t border-yellow-500/25" />
+                  <button
+                    onClick={() => handleNavigation('profile')}
+                    className="block w-full text-left px-3 py-2 rounded-lg text-base font-semibold text-yellow-300 hover:bg-yellow-500 hover:text-black transition-all"
+                  >
+                    My Profile
+                  </button>
 
-            {!user && (
-              <button
-                onClick={() => handleNavigation('auth')}
-                className="block w-full text-left px-3 py-2 rounded-md text-base font-medium bg-yellow-400 text-black"
-              >
-                Sign In / Sign Up
-              </button>
-            )}
+                  <button
+                    onClick={handleSignOut}
+                    className="block w-full text-left px-3 py-2 rounded-lg text-base font-semibold text-yellow-300 hover:bg-yellow-500 hover:text-black transition-all"
+                  >
+                    Sign Out
+                  </button>
+                </>
+              )}
+
+              {!user && (
+                <>
+                  <div className="my-2 border-t border-yellow-500/25" />
+                  <button
+                    onClick={() => handleNavigation('auth')}
+                    className={`block w-full text-left px-3 py-2 rounded-lg text-base font-semibold transition-all ${
+                      currentPage === 'auth'
+                        ? 'bg-yellow-400 text-black'
+                        : 'text-yellow-300 hover:bg-yellow-500 hover:text-black'
+                    }`}
+                  >
+                    Sign In / Sign Up
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

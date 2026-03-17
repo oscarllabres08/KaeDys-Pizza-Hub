@@ -1,0 +1,8 @@
+{
+  "routes": [
+    { "src": "^/admin\\.html$", "status": 404 },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/" }
+  ]
+}
+

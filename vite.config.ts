@@ -11,7 +11,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: 'index.html',
-        admin: 'admin.html',
+        admin: 'kaedys-admin-dashboard.html',
       },
     },
   },

@@ -8,7 +8,7 @@ type OrderWithItems = Order & {
 };
 
 export default function ProfilePage() {
-  const { profile } = useAuth();
+  const { customerProfile } = useAuth();
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -17,7 +17,7 @@ export default function ProfilePage() {
   }, []);
 
   const fetchOrders = async () => {
-    if (!profile) return;
+    if (!customerProfile) return;
 
     try {
       const { data: ordersData, error } = await supabase
@@ -26,7 +26,7 @@ export default function ProfilePage() {
           *,
           order_items (*)
         `)
-        .eq('user_id', profile.id)
+        .eq('user_id', customerProfile.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -61,7 +61,7 @@ export default function ProfilePage() {
     return status.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   };
 
-  if (!profile) {
+  if (!customerProfile) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-16 px-4 flex items-center justify-center">
         <p className="text-xl text-gray-300">Loading...</p>
@@ -82,12 +82,7 @@ export default function ProfilePage() {
               <User className="w-8 h-8 text-yellow-400" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-yellow-300">{profile.full_name}</h2>
-              {profile.is_admin && (
-                <span className="inline-block bg-yellow-400 text-black px-3 py-1 rounded-full text-xs font-semibold">
-                  Admin
-                </span>
-              )}
+              <h2 className="text-2xl font-bold text-yellow-300">{customerProfile.full_name}</h2>
             </div>
           </div>
 
@@ -96,13 +91,13 @@ export default function ProfilePage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Phone Number
               </label>
-              <p className="text-gray-900">{profile.phone}</p>
+              <p className="text-gray-900">{customerProfile.phone}</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Address
               </label>
-              <p className="text-gray-900">{profile.address}</p>
+              <p className="text-gray-900">{customerProfile.address || '—'}</p>
             </div>
           </div>
         </div>

@@ -1,78 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Plus, Check } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
 import { useAuth } from '../contexts/AuthContext';
-import { MenuItem } from '../lib/supabase';
+import { useBuyNow } from '../contexts/BuyNowContext';
+import { MenuItem, supabase } from '../lib/supabase';
 
 type MenuPageProps = {
   onNavigate: (page: string) => void;
 };
-
-export const MENU_ITEMS: MenuItem[] = [
-  
-  {
-    id: '2',
-    name: 'All-Day Silog Plate',
-    description: 'Tapsilog / Tosilog style breakfast plate with egg and garlic rice.',
-    price: 95,
-    image_url: '/menu/tapsilogMeal.jpg',
-    category: 'Silog Meals',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    name: 'Sisig Rice Topps',
-    description: 'Savory sisig served over rice in a handy cup – perfect budget meal.',
-    price: 39,
-    image_url: '/menu/budgetmealsisig.jpg',
-    category: 'Budget Meals',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
-
-  {
-    id: '5',
-    name: 'Budget Chicken Meal',
-    description: 'Crispy chicken with rice – sulit ulam for everyday cravings.',
-    price: 79,
-    image_url: '/menu/budget-chicken.jpg',
-    category: 'Budget Meals',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '6',
-    name: 'Brown Sugar Milktea',
-    description: 'Creamy brown sugar milk tea with pearls, served ice-cold.',
-    price: 69,
-    image_url: '/menu/milktea.jpg',
-    category: 'Drinks',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
-  
-  {
-    id: '8',
-    name: 'Mais Con Yelo Overload',
-    description: 'Corn, milk, ice, and toppings stacked in a tall cup for sharing.',
-    price: 89,
-    image_url: '/menu/maisconyelo.jpg',
-    category: 'Drinks',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '9',
-    name: 'Spamsilog',
-    description: 'Spam, Egg and Fried Rice',
-    price: 89,
-    image_url: '/menu/spamsilogMeal.jpg',
-    category: 'Budget Meals',
-    available: true,
-    created_at: new Date().toISOString(),
-  },
-];
 
 export default function MenuPage({ onNavigate }: MenuPageProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -81,28 +15,39 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
   const [search, setSearch] = useState('');
   const { addToCart } = useCart();
   const { user } = useAuth();
-  const [availability, setAvailability] = useState<Record<string, boolean>>({});
+  const { startBuyNow } = useBuyNow();
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('menuAvailability');
-      if (stored) {
-        setAvailability(JSON.parse(stored));
+    const loadMenu = async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('menu_items')
+          .select('*')
+          .order('display_order', { ascending: true })
+          .order('created_at', { ascending: true });
+        if (error) throw error;
+        setMenuItems((data || []) as MenuItem[]);
+      } catch (error) {
+        console.error('Error loading menu items', error);
+        setMenuItems([]);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error loading menu availability from localStorage', error);
-    }
+    };
+    loadMenu();
   }, []);
 
   const isItemAvailable = (item: MenuItem) => {
-    const value = availability[item.id];
-    if (typeof value === 'boolean') return value;
-    return true;
+    return item.is_available;
   };
 
   const categories = ['All', 'Pizza', 'Budget Meals', 'Silog Meals', 'Drinks'];
 
-  const filteredItems = MENU_ITEMS.filter((item) => {
+  const filteredItems = menuItems.filter((item) => {
     const matchesCategory =
       selectedCategory === 'All' ? true : item.category === selectedCategory;
     const q = search.trim().toLowerCase();
@@ -119,8 +64,13 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
       return;
     }
 
-    addToCart(item);
+    const qty = quantities[item.id] && quantities[item.id] > 0 ? quantities[item.id] : 1;
+    for (let i = 0; i < qty; i++) {
+      addToCart(item);
+    }
     setAddedItems((prev) => new Set(prev).add(item.id));
+    // reset quantity back to 1 for this item
+    setQuantities((prev) => ({ ...prev, [item.id]: 1 }));
     setTimeout(() => {
       setAddedItems((prev) => {
         const newSet = new Set(prev);
@@ -128,6 +78,19 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
         return newSet;
       });
     }, 2000);
+  };
+
+  const handleBuyNow = (item: MenuItem) => {
+    if (!user) {
+      onNavigate('auth');
+      return;
+    }
+
+    const qty = quantities[item.id] && quantities[item.id] > 0 ? quantities[item.id] : 1;
+    startBuyNow(item, qty);
+    // reset quantity back to 1 for this item
+    setQuantities((prev) => ({ ...prev, [item.id]: 1 }));
+    onNavigate('checkout');
   };
 
   return (
@@ -170,73 +133,112 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
-          {filteredItems.map((item) => {
-            const available = isItemAvailable(item);
-            return (
-              <div
-                key={item.id}
-                className="bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col aspect-[3/4]"
-              >
-                <button
-                  type="button"
-                  className="relative h-24 overflow-hidden w-full"
-                  onClick={() => setPreviewItem(item)}
+        {loading ? (
+          <div className="text-center py-10 text-gray-300">Loading menu...</div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+            {filteredItems.map((item) => {
+              const available = isItemAvailable(item);
+              const quantity = quantities[item.id] ?? 1;
+              return (
+                <div
+                  key={item.id}
+                  className="bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col aspect-[3/4]"
                 >
-                  <img
-                    src={item.image_url}
-                    alt={item.name}
-                    className="w-full h-full object-cover transition-transform hover:scale-110"
-                  />
-                  <div className="absolute top-2 right-2 bg-yellow-400 text-black px-3 py-1 rounded-full font-bold">
-                    ₱{item.price}
+                  <button
+                    type="button"
+                    className="relative h-24 overflow-hidden w-full"
+                    onClick={() => setPreviewItem(item)}
+                  >
+                    <img
+                      src={item.image_url}
+                      alt={item.name}
+                      className="w-full h-full object-cover transition-transform hover:scale-110"
+                    />
+                    <div className="absolute top-2 right-2 bg-yellow-400 text-black px-3 py-1 rounded-full font-bold">
+                      ₱{item.price}
+                    </div>
+                    {!available && (
+                      <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
+                        <span className="px-3 py-1 rounded-full text-[11px] font-semibold bg-gray-200 text-gray-800">
+                          Not available today
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                  <div className="p-3 flex-1 flex flex-col">
+                    <h3 className="text-sm font-bold text-yellow-300 mb-1 line-clamp-2">
+                      {item.name}
+                    </h3>
+                    <p className="text-gray-300 text-xs mb-3 line-clamp-2">
+                      {item.description}
+                    </p>
+                    {available ? (
+                      <>
+                        <div className="mb-3 flex items-center justify-between gap-0">
+                          <span className="text-xs text-gray-300">Quantity</span>
+                          <div className="flex items-center gap-1.5 bg-black/40 rounded-full px-1 py-0.1 border border-yellow-500/40">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQuantities((prev) => ({
+                                  ...prev,
+                                  [item.id]: Math.max(1, (prev[item.id] ?? 1) - 1),
+                                }))
+                              }
+                              className="w-5 h-5 flex items-center justify-center rounded-full bg-neutral-900 text-yellow-300 hover:bg-neutral-800 text-[10px]"
+                            >
+                              -
+                            </button>
+                            <span className="min-w-[1.4rem] text-center text-xs font-semibold text-white">
+                              {quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQuantities((prev) => ({
+                                  ...prev,
+                                  [item.id]: Math.min(99, (prev[item.id] ?? 1) + 1),
+                                }))
+                              }
+                              className="w-5 h-5 flex items-center justify-center rounded-full bg-neutral-900 text-yellow-300 hover:bg-neutral-800 text-[10px]"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-auto flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAddToCart(item)}
+                            className={`flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold transition-all px-1.5 py-0 ${
+                              addedItems.has(item.id)
+                                ? 'bg-green-500 text-white'
+                                : 'bg-yellow-400 text-black hover:bg-yellow-300'
+                            }`}
+                          >
+                            {addedItems.has(item.id) ? 'Added' : 'Add to Order'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleBuyNow(item)}
+                            className="flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold border border-yellow-400 text-yellow-300 hover:bg-yellow-400/10 transition-all px-2 py-1.5"
+                          >
+                            Buy Now
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-auto w-full py-2 rounded-md text-xs font-semibold text-center bg-gray-300 text-gray-700">
+                        Currently Unavailable
+                      </div>
+                    )}
                   </div>
-                  {!available && (
-                    <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
-                      <span className="px-3 py-1 rounded-full text-[11px] font-semibold bg-gray-200 text-gray-800">
-                        Not available today
-                      </span>
-                    </div>
-                  )}
-                </button>
-                <div className="p-3 flex-1 flex flex-col">
-                  <h3 className="text-sm font-bold text-yellow-300 mb-1 line-clamp-2">
-                    {item.name}
-                  </h3>
-                  <p className="text-gray-300 text-xs mb-3 line-clamp-2">
-                    {item.description}
-                  </p>
-                  {available ? (
-                    <button
-                      onClick={() => handleAddToCart(item)}
-                      className={`mt-auto w-full py-2 rounded-md text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
-                        addedItems.has(item.id)
-                          ? 'bg-green-500 text-white'
-                          : 'bg-yellow-400 text-black hover:bg-yellow-300'
-                      }`}
-                    >
-                      {addedItems.has(item.id) ? (
-                        <>
-                          <Check className="w-5 h-5" />
-                          Added to Cart
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="w-5 h-5" />
-                          Add to Cart
-                        </>
-                      )}
-                    </button>
-                  ) : (
-                    <div className="mt-auto w-full py-2 rounded-md text-xs font-semibold text-center bg-gray-300 text-gray-700">
-                      Currently Unavailable
-                    </div>
-                  )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
         {previewItem && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
             <div className="bg-neutral-900 rounded-2xl max-w-md w-full overflow-hidden border border-yellow-500/40">

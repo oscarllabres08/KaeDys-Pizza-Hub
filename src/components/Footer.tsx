@@ -15,7 +15,7 @@ export default function Footer() {
             </p>
           </div>
 
-          <div className="text-center">
+          <div className="hidden md:block text-center">
             <h4 className="font-bold text-lg mb-4 text-yellow-300">Contact Us</h4>
             <div className="space-y-2 text-sm text-yellow-200">
               <div className="flex items-center justify-center">
@@ -33,7 +33,7 @@ export default function Footer() {
             </div>
           </div>
 
-          <div className="text-center md:text-right">
+          <div className="hidden md:block text-center md:text-right">
             <h4 className="font-bold text-lg mb-4 text-yellow-300">Hours</h4>
             <div className="space-y-1 text-sm text-yellow-200">
               <p>Monday - Thursday: 10am - 10pm</p>

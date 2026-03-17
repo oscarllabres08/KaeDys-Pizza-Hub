@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Navigation from './components/Navigation';
 import Footer from './components/Footer';
 import HomePage from './pages/HomePage';
@@ -12,6 +12,7 @@ import ProfilePage from './pages/ProfilePage';
 import AuthForm from './components/AuthForm';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { CartProvider } from './contexts/CartContext';
+import { BuyNowProvider } from './contexts/BuyNowContext';
 
 type PageId =
   | 'home'
@@ -21,6 +22,7 @@ type PageId =
   | 'about'
   | 'contact'
   | 'cart'
+  | 'checkout'
   | 'profile'
   | 'auth';
 
@@ -28,8 +30,27 @@ function AppContent() {
   const [currentPage, setCurrentPage] = useState<PageId>('home');
   const { loading } = useAuth();
 
+  useEffect(() => {
+    const hash = window.location.hash.replace('#', '') as PageId | '';
+    if (hash && ['home', 'menu', 'game', 'gallery', 'about', 'contact', 'cart', 'checkout', 'profile', 'auth'].includes(hash)) {
+      setCurrentPage(hash as PageId);
+    }
+
+    const onHashChange = () => {
+      const newHash = window.location.hash.replace('#', '') as PageId | '';
+      if (newHash && ['home', 'menu', 'game', 'gallery', 'about', 'contact', 'cart', 'checkout', 'profile', 'auth'].includes(newHash)) {
+        setCurrentPage(newHash as PageId);
+      }
+    };
+
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
   const handleNavigate = (page: PageId | string) => {
-    setCurrentPage(page as PageId);
+    const target = page as PageId;
+    setCurrentPage(target);
+    window.location.hash = `#${target}`;
   };
 
   let content: JSX.Element;
@@ -54,6 +75,9 @@ function AppContent() {
       break;
     case 'cart':
       content = <CartPage onNavigate={handleNavigate} />;
+      break;
+    case 'checkout':
+      content = <CartPage onNavigate={handleNavigate} startInCheckout />;
       break;
     case 'profile':
       content = <ProfilePage />;
@@ -94,7 +118,9 @@ export default function App() {
   return (
     <AuthProvider>
       <CartProvider>
-        <AppContent />
+        <BuyNowProvider>
+          <AppContent />
+        </BuyNowProvider>
       </CartProvider>
     </AuthProvider>
   );

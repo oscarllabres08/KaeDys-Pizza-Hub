@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 type AuthFormProps = {
@@ -11,6 +12,9 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const { signIn, signUp } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -38,9 +42,14 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
           phone: formData.phone,
           address: formData.address,
         }, adminSignUp);
-      } else {
-        await signIn(formData.email, formData.password);
+        setSuccessMessage('Account created successfully');
+        setLoading(false);
+        setTimeout(() => {
+          onSuccess();
+        }, 1500);
+        return;
       }
+      await signIn(formData.email, formData.password);
       onSuccess();
     } catch (err: unknown) {
       const error = err as Error;
@@ -72,6 +81,12 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
         {error && (
           <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mb-4 p-3 bg-green-100 border border-green-500 text-green-800 rounded-lg text-sm font-medium text-center">
+            {successMessage}
           </div>
         )}
 
@@ -142,15 +157,25 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
             <label className="block text-sm font-medium text-gray-200 mb-1">
               Password
             </label>
-            <input
-              type="password"
-              required
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="w-full px-4 py-3 border border-gray-700 rounded-lg bg-black text-white focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all"
-              placeholder="Enter your password"
-              minLength={6}
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                className="w-full px-4 py-3 pr-11 border border-gray-700 rounded-lg bg-black text-white focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all"
+                placeholder="Enter your password"
+                minLength={6}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((p) => !p)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 transition-all"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
 
           {isSignUp && (
@@ -158,15 +183,25 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
               <label className="block text-sm font-medium text-gray-200 mb-1">
                 Confirm Password
               </label>
-              <input
-                type="password"
-                required
-                value={formData.confirmPassword}
-                onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                className="w-full px-4 py-3 border border-gray-700 rounded-lg bg-black text-white focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all"
-                placeholder="Re-enter your password"
-                minLength={6}
-              />
+              <div className="relative">
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  required
+                  value={formData.confirmPassword}
+                  onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                  className="w-full px-4 py-3 pr-11 border border-gray-700 rounded-lg bg-black text-white focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all"
+                  placeholder="Re-enter your password"
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword((p) => !p)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 transition-all"
+                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
             </div>
           )}
 

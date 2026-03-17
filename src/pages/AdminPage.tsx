@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { supabase, Announcement, GalleryImage, GameSettings, Order, OrderItem } from '../lib/supabase';
+import { useEffect, useMemo, useState } from 'react';
+import { supabase, AdminProfile, Announcement, GalleryImage, GameSettings, MenuItem, Order, OrderItem } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Pizza,
@@ -12,13 +12,12 @@ import {
   X,
   LogOut,
 } from 'lucide-react';
-import { MENU_ITEMS } from './MenuPage';
 
 type OrderWithItems = Order & {
   order_items: OrderItem[];
 };
 
-type TabId = 'orders' | 'menu' | 'announcements' | 'gallery' | 'game';
+type TabId = 'orders' | 'menu' | 'announcements' | 'gallery' | 'game' | 'admins';
 
 const STATUS_LABELS: { id: Order['status']; label: string }[] = [
   { id: 'pending', label: 'Pending' },
@@ -52,14 +51,27 @@ async function sendStatusEmail(order: Order, newStatus: Order['status']) {
 }
 
 export default function AdminPage() {
-  const { profile, signOut } = useAuth();
+  const { signOut, adminProfile } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>('orders');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isMasterAdmin = !!adminProfile?.is_master_admin;
 
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
 
-  const [menuAvailability, setMenuAvailability] = useState<Record<string, boolean>>({});
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuLoading, setMenuLoading] = useState(false);
+  const [menuModalOpen, setMenuModalOpen] = useState(false);
+  const [editingMenuItem, setEditingMenuItem] = useState<MenuItem | null>(null);
+  const [menuForm, setMenuForm] = useState({
+    category: 'Budget Meals',
+    custom_category: '',
+    name: '',
+    description: '',
+    price: '',
+    imageFile: null as File | null,
+    image_url: '',
+  });
 
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [annLoading, setAnnLoading] = useState(false);
@@ -72,13 +84,25 @@ export default function AdminPage() {
   const [gameSettings, setGameSettings] = useState<GameSettings | null>(null);
   const [gameLoading, setGameLoading] = useState(false);
 
+  const [admins, setAdmins] = useState<AdminProfile[]>([]);
+  const [adminsLoading, setAdminsLoading] = useState(false);
+
   useEffect(() => {
     // Always load admin data for any logged-in user on the admin site
     fetchOrders();
+    fetchMenuItems();
     fetchAnnouncements();
     fetchGallery();
     fetchGameSettings();
-  }, []);
+    if (isMasterAdmin) {
+      fetchAdmins();
+    }
+  }, [isMasterAdmin]);
+
+  const categoryOptions = useMemo(
+    () => ['Budget Meals', 'Pizza', 'Silog Meals', 'Drinks', 'Others'],
+    []
+  );
 
   const fetchOrders = async () => {
     setOrdersLoading(true);
@@ -98,6 +122,23 @@ export default function AdminPage() {
     }
   };
 
+  const fetchMenuItems = async () => {
+    setMenuLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('menu_items')
+        .select('*')
+        .order('display_order', { ascending: true })
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setMenuItems((data || []) as MenuItem[]);
+    } catch (error) {
+      console.error('Error loading menu items', error);
+    } finally {
+      setMenuLoading(false);
+    }
+  };
+
   const updateOrderStatus = async (order: OrderWithItems, status: Order['status']) => {
     try {
       const { error } = await supabase
@@ -113,28 +154,18 @@ export default function AdminPage() {
     }
   };
 
-  const toggleMenuAvailability = (id: string) => {
-    setMenuAvailability((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      try {
-        localStorage.setItem('menuAvailability', JSON.stringify(next));
-      } catch (error) {
-        console.error('Error saving menu availability', error);
-      }
-      return next;
-    });
-  };
-
-  useEffect(() => {
+  const toggleMenuAvailability = async (item: MenuItem) => {
     try {
-      const stored = localStorage.getItem('menuAvailability');
-      if (stored) {
-        setMenuAvailability(JSON.parse(stored));
-      }
+      const { error } = await supabase
+        .from('menu_items')
+        .update({ is_available: !item.is_available })
+        .eq('id', item.id);
+      if (error) throw error;
+      await fetchMenuItems();
     } catch (error) {
-      console.error('Error loading menu availability', error);
+      console.error('Error updating menu availability', error);
     }
-  }, []);
+  };
 
   const fetchAnnouncements = async () => {
     setAnnLoading(true);
@@ -254,6 +285,40 @@ export default function AdminPage() {
     }
   };
 
+  const fetchAdmins = async () => {
+    setAdminsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('admin_profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setAdmins((data || []) as AdminProfile[]);
+    } catch (error) {
+      console.error('Error loading admin profiles', error);
+    } finally {
+      setAdminsLoading(false);
+    }
+  };
+
+  const updateAdminActive = async (admin: AdminProfile, makeActive: boolean) => {
+    try {
+      if (admin.is_master_admin && !makeActive) {
+        alert('You cannot deactivate the Master Admin account.');
+        return;
+      }
+      const { error } = await supabase
+        .from('admin_profiles')
+        .update({ is_active: makeActive })
+        .eq('id', admin.id);
+      if (error) throw error;
+      await fetchAdmins();
+    } catch (error) {
+      console.error('Error updating admin approval status', error);
+      alert('Failed to update admin status. Please try again.');
+    }
+  };
+
   const toggleGameActive = async () => {
     if (!gameSettings) return;
     try {
@@ -274,11 +339,21 @@ export default function AdminPage() {
     setMobileMenuOpen(false);
   };
 
+  const handleLogout = async () => {
+    if (!window.confirm('Are you sure you want to log out?')) return;
+    try {
+      await signOut();
+      window.location.reload();
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
+
   const navButtons = (
     <>
       <button
         onClick={() => handleSelectTab('orders')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
           activeTab === 'orders'
             ? 'bg-yellow-400 text-black shadow-lg'
             : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
@@ -289,7 +364,7 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('menu')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
           activeTab === 'menu'
             ? 'bg-yellow-400 text-black shadow-lg'
             : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
@@ -300,7 +375,7 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('announcements')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
           activeTab === 'announcements'
             ? 'bg-yellow-400 text-black shadow-lg'
             : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
@@ -311,7 +386,7 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('gallery')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
           activeTab === 'gallery'
             ? 'bg-yellow-400 text-black shadow-lg'
             : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
@@ -322,7 +397,7 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('game')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
           activeTab === 'game'
             ? 'bg-yellow-400 text-black shadow-lg'
             : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
@@ -331,8 +406,77 @@ export default function AdminPage() {
         <Gamepad2 className="w-4 h-4" />
         Discount Game
       </button>
+      {isMasterAdmin && (
+        <button
+          onClick={() => handleSelectTab('admins')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+            activeTab === 'admins'
+              ? 'bg-yellow-400 text-black shadow-lg'
+              : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          Admins
+        </button>
+      )}
     </>
   );
+
+  const handleSaveMenuItem = async () => {
+    try {
+      const price = Number(menuForm.price);
+      if (!menuForm.name || !menuForm.description || !Number.isFinite(price)) {
+        alert('Please fill out name, description, and a valid price.');
+        return;
+      }
+      if (menuForm.category === 'Others' && !menuForm.custom_category.trim()) {
+        alert('Please enter a custom category.');
+        return;
+      }
+
+      let imageUrl = menuForm.image_url;
+      if (menuForm.imageFile) {
+        const fileExt = menuForm.imageFile.name.split('.').pop();
+        const fileName = `menu-${Date.now()}.${fileExt}`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('menu')
+          .upload(fileName, menuForm.imageFile);
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage.from('menu').getPublicUrl(uploadData.path);
+        imageUrl = urlData.publicUrl;
+      }
+
+      const payload = {
+        name: menuForm.name,
+        description: menuForm.description,
+        price,
+        category: menuForm.category,
+        custom_category: menuForm.category === 'Others' ? menuForm.custom_category.trim() : null,
+        image_url: imageUrl,
+      };
+
+      if (!payload.image_url) {
+        alert('Please upload an image.');
+        return;
+      }
+
+      if (editingMenuItem) {
+        const { error } = await supabase.from('menu_items').update(payload).eq('id', editingMenuItem.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('menu_items').insert([{ ...payload, is_available: true }]);
+        if (error) throw error;
+      }
+
+      setMenuModalOpen(false);
+      setEditingMenuItem(null);
+      await fetchMenuItems();
+    } catch (error) {
+      console.error('Error saving menu item', error);
+      alert('Failed to save menu item. Please try again.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 pb-8">
@@ -357,7 +501,7 @@ export default function AdminPage() {
           <div className="hidden md:flex items-center gap-3">
             <div className="flex flex-wrap gap-2 justify-end">{navButtons}</div>
             <button
-              onClick={() => signOut()}
+              onClick={handleLogout}
               className="ml-2 inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs font-semibold bg-red-500/20 text-red-200 hover:bg-red-500/30 transition-all"
             >
               <LogOut className="w-4 h-4" />
@@ -480,12 +624,27 @@ export default function AdminPage() {
                     Discount Game
                   </span>
                 </button>
+                {isMasterAdmin && (
+                  <button
+                    onClick={() => handleSelectTab('admins')}
+                    className={`w-full inline-flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-semibold ${
+                      activeTab === 'admins'
+                        ? 'bg-yellow-400 text-black'
+                        : 'bg-neutral-800 text-gray-100'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <ClipboardList className="w-4 h-4" />
+                      Admins
+                    </span>
+                  </button>
+                )}
               </div>
 
               <button
                 onClick={() => {
                   setMobileMenuOpen(false);
-                  signOut();
+                  handleLogout();
                 }}
                 className="mt-2 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-500 transition-all"
               >
@@ -507,6 +666,114 @@ export default function AdminPage() {
           </p>
         </div>
 
+        {menuModalOpen && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-lg bg-neutral-900 rounded-2xl border border-yellow-500/30 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between p-4 border-b border-yellow-500/20">
+                <h3 className="text-lg font-bold text-yellow-300">
+                  {editingMenuItem ? 'Edit Product' : 'Add Product'}
+                </h3>
+                <button
+                  onClick={() => setMenuModalOpen(false)}
+                  className="p-2 rounded-lg text-gray-300 hover:bg-yellow-500/10 hover:text-yellow-300 transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-1">Category</label>
+                  <select
+                    value={menuForm.category}
+                    onChange={(e) => setMenuForm((p) => ({ ...p, category: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
+                  >
+                    {categoryOptions.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {menuForm.category === 'Others' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-200 mb-1">Custom category</label>
+                    <input
+                      value={menuForm.custom_category}
+                      onChange={(e) => setMenuForm((p) => ({ ...p, custom_category: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
+                      placeholder="Enter category name"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-1">Product name</label>
+                  <input
+                    value={menuForm.name}
+                    onChange={(e) => setMenuForm((p) => ({ ...p, name: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
+                    placeholder="e.g. Pepperoni Pizza"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-1">Short description</label>
+                  <textarea
+                    value={menuForm.description}
+                    onChange={(e) => setMenuForm((p) => ({ ...p, description: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
+                    rows={3}
+                    placeholder="Write a short description"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-200 mb-1">Price (₱)</label>
+                    <input
+                      value={menuForm.price}
+                      onChange={(e) => setMenuForm((p) => ({ ...p, price: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-200 mb-1">Image</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setMenuForm((p) => ({ ...p, imageFile: e.target.files?.[0] || null }))}
+                      className="w-full text-sm text-gray-200"
+                    />
+                  </div>
+                </div>
+                {(menuForm.image_url || menuForm.imageFile) && (
+                  <div className="rounded-xl overflow-hidden border border-yellow-500/20 bg-black/40">
+                    <img
+                      src={menuForm.imageFile ? URL.createObjectURL(menuForm.imageFile) : menuForm.image_url}
+                      alt="Preview"
+                      className="w-full h-40 object-cover"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="p-4 border-t border-yellow-500/20 flex gap-3 justify-end">
+                <button
+                  onClick={() => setMenuModalOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-neutral-800 text-gray-200 font-semibold hover:bg-neutral-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveMenuItem}
+                  className="px-4 py-2 rounded-lg bg-yellow-400 text-black font-semibold hover:bg-yellow-300 transition-all"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'orders' && (
           <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
             <div className="flex items-center gap-2 mb-4">
@@ -524,49 +791,83 @@ export default function AdminPage() {
                 {orders.map((order) => (
                   <div
                     key={order.id}
-                    className="border border-yellow-500/20 rounded-lg p-4 hover:shadow-md transition-all bg-black/40"
+                    className="border border-yellow-500/20 rounded-2xl p-4 md:p-5 hover:shadow-md transition-all bg-black/40"
                   >
-                    <div className="flex flex-wrap justify-between gap-2 mb-3">
-                      <div>
-                        <p className="text-sm text-gray-300">
-                          Order #{order.id.slice(0, 8)}
-                        </p>
-                        <p className="text-xs text-gray-500">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-base font-bold text-yellow-200">
+                            Order #{order.id.slice(0, 8)}
+                          </p>
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-white/10 bg-black/30 text-gray-200">
+                            {order.payment_method}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 mt-1">
                           {new Date(order.created_at).toLocaleString()}
                         </p>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-sm text-gray-300 mt-2 break-words">
                           {order.delivery_address}
                         </p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm text-gray-200">
-                          Total:{' '}
-                          <span className="font-semibold text-yellow-300">
-                            ₱{order.final_amount.toFixed(2)}
-                          </span>
+
+                      <div className="sm:text-right">
+                        <p className="text-xs text-gray-400">Total</p>
+                        <p className="text-lg font-extrabold text-yellow-300 leading-tight">
+                          ₱{order.final_amount.toFixed(2)}
                         </p>
-                        <p className="text-xs text-gray-500">
-                          Payment: {order.payment_method}
-                        </p>
+                        {order.discount_amount > 0 && (
+                          <p className="text-[11px] text-green-300/90 mt-1">
+                            Discount: -₱{order.discount_amount.toFixed(2)}
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <div className="mb-3">
-                      {order.order_items.map((item) => (
-                        <p key={item.id} className="text-sm text-gray-200">
-                          {item.quantity}x {item.menu_item_name} - ₱
-                          {item.subtotal.toFixed(2)}
-                        </p>
-                      ))}
+
+                    <div className="mt-4 rounded-xl border border-yellow-500/15 bg-black/30 p-3">
+                      <p className="text-xs font-semibold text-gray-300 mb-2">Items</p>
+                      <div className="space-y-2">
+                        {order.order_items.map((item) => {
+                          const menuItem = menuItems.find((m) => m.id === item.menu_item_id);
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex items-center justify-between gap-3 rounded-lg bg-black/40 px-2 py-2"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                {menuItem && (
+                                  <img
+                                    src={menuItem.image_url}
+                                    alt={item.menu_item_name}
+                                    className="w-14 h-14 rounded-lg object-cover border border-yellow-500/30"
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <p className="text-sm text-gray-100 leading-snug break-words">
+                                    <span className="text-gray-300 font-semibold">{item.quantity}×</span>{' '}
+                                    {item.menu_item_name}
+                                  </p>
+                                  <p className="text-[11px] text-gray-400">
+                                    ₱{item.price.toFixed(2)} each
+                                  </p>
+                                </div>
+                              </div>
+                              <p className="text-sm font-semibold text-yellow-200 whitespace-nowrap">
+                                ₱{item.subtotal.toFixed(2)}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-yellow-500/20 pt-3">
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <span className="text-xs text-gray-400">Status:</span>
+
+                    <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-yellow-500/15 pt-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">Status</span>
                         <select
                           value={order.status}
-                          onChange={(e) =>
-                            updateOrderStatus(order, e.target.value as Order['status'])
-                          }
-                          className="text-sm border border-yellow-500/40 rounded-lg px-2 py-1 bg-black text-white"
+                          onChange={(e) => updateOrderStatus(order, e.target.value as Order['status'])}
+                          className="text-sm font-semibold border border-yellow-500/35 rounded-xl px-3 py-2 bg-black/50 text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
                         >
                           {STATUS_LABELS.map((s) => (
                             <option key={s.id} value={s.id}>
@@ -575,6 +876,9 @@ export default function AdminPage() {
                           ))}
                         </select>
                       </div>
+                      <p className="text-xs text-gray-500">
+                        Items: <span className="text-gray-300 font-semibold">{order.order_items.length}</span>
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -585,42 +889,108 @@ export default function AdminPage() {
 
         {activeTab === 'menu' && (
           <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2">
               <Pizza className="w-5 h-5 text-yellow-400" />
               <h2 className="text-xl font-bold text-yellow-300">Menu Availability</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingMenuItem(null);
+                  setMenuForm({
+                    category: 'Budget Meals',
+                    custom_category: '',
+                    name: '',
+                    description: '',
+                    price: '',
+                    imageFile: null,
+                    image_url: '',
+                  });
+                  setMenuModalOpen(true);
+                }}
+                className="px-4 py-2 rounded-lg bg-yellow-400 text-black text-sm font-semibold hover:bg-yellow-300 transition-all"
+              >
+                + Add Product
+              </button>
             </div>
             <p className="text-sm text-gray-300 mb-4">
-              Toggle items as available or unavailable. The public hardcoded menu will respect these flags.
+              Add, edit, and toggle availability. The public menu is loaded from the database.
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {MENU_ITEMS.map((item) => {
-                const available = menuAvailability[item.id] ?? true;
-                return (
+            {menuLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
+              </div>
+            ) : menuItems.length === 0 ? (
+              <p className="text-gray-300 text-center py-6">No menu items yet.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {menuItems.map((item) => (
                   <div
                     key={item.id}
-                    className="border border-yellow-500/20 rounded-lg p-4 flex flex-col gap-2 bg-black/40"
+                    className="border border-yellow-500/20 rounded-lg p-4 flex flex-col gap-3 bg-black/40"
                   >
-                    <p className="font-semibold text-yellow-300">{item.name}</p>
-                    <p className="text-sm text-gray-300 line-clamp-2">
-                      {item.description}
-                    </p>
-                    <p className="text-sm text-gray-200">
-                      ₱{item.price.toFixed(2)} • {item.category}
-                    </p>
-                    <button
-                      onClick={() => toggleMenuAvailability(item.id)}
-                      className={`mt-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
-                        available
-                          ? 'bg-green-500/20 text-green-300 hover:bg-green-500/30'
-                          : 'bg-neutral-800 text-gray-300 hover:bg-neutral-700'
-                      }`}
-                    >
-                      {available ? 'Available' : 'Unavailable'}
-                    </button>
+                    <div className="flex items-start gap-3">
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="w-16 h-16 rounded-lg object-cover border border-yellow-500/20"
+                      />
+                      <div className="flex-1">
+                        <p className="font-semibold text-yellow-300 leading-tight">{item.name}</p>
+                        <p className="text-xs text-gray-400">
+                          {item.category === 'Others' ? item.custom_category || 'Others' : item.category}
+                        </p>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <span className="text-sm text-gray-200 font-semibold">
+                            ₱{Number(item.price).toFixed(2)}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              item.is_available
+                                ? 'bg-green-500/20 text-green-300 border border-green-500/60'
+                                : 'bg-red-500/20 text-red-300 border border-red-500/60'
+                            }`}
+                          >
+                            {item.is_available ? 'Available' : 'Unavailable'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-300 line-clamp-2">{item.description}</p>
+                    <div className="flex gap-2 mt-auto">
+                      <button
+                        onClick={() => toggleMenuAvailability(item)}
+                        className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                          item.is_available
+                            ? 'bg-red-600 text-white hover:bg-red-500'
+                            : 'bg-green-600 text-white hover:bg-green-500'
+                        }`}
+                      >
+                        {item.is_available ? 'Mark as Unavailable' : 'Mark as Available'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingMenuItem(item);
+                          setMenuForm({
+                            category: item.category,
+                            custom_category: item.custom_category || '',
+                            name: item.name,
+                            description: item.description,
+                            price: String(item.price),
+                            imageFile: null,
+                            image_url: item.image_url,
+                          });
+                          setMenuModalOpen(true);
+                        }}
+                        className="px-3 py-2 rounded-lg text-xs font-semibold bg-yellow-400 text-black hover:bg-yellow-300 transition-all"
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -794,6 +1164,89 @@ export default function AdminPage() {
                 >
                   {gameSettings.is_active ? 'Disable Game' : 'Enable Game'}
                 </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {isMasterAdmin && activeTab === 'admins' && (
+          <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
+            <div className="flex items-center gap-2 mb-4">
+              <ClipboardList className="w-5 h-5 text-yellow-400" />
+              <h2 className="text-xl font-bold text-yellow-300">Admin Accounts</h2>
+            </div>
+            <p className="text-sm text-gray-300 mb-4">
+              Approve or decline admin access. Only the Master Admin can manage these accounts.
+            </p>
+
+            {adminsLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
+              </div>
+            ) : admins.length === 0 ? (
+              <p className="text-gray-300 text-center py-6">No admin accounts found.</p>
+            ) : (
+              <div className="space-y-3">
+                {admins.map((admin) => (
+                  <div
+                    key={admin.id}
+                    className="border border-yellow-500/20 rounded-lg p-3 bg-black/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                  >
+                    <div>
+                      <p className="font-semibold text-yellow-300">
+                        {admin.full_name}{' '}
+                        {admin.is_master_admin && (
+                          <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-yellow-400 text-black">
+                            MASTER ADMIN
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-300">{admin.email}</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Registered:{' '}
+                        {new Date(admin.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`px-2 py-1 rounded-full text-[11px] font-semibold ${
+                          admin.is_active
+                            ? 'bg-green-500/20 text-green-300 border border-green-500/40'
+                            : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                        }`}
+                      >
+                        {admin.is_active ? 'Approved' : 'Pending'}
+                      </span>
+                      {!admin.is_master_admin && (
+                        <div className="flex gap-2">
+                          {!admin.is_active ? (
+                            <>
+                              <button
+                                onClick={() => updateAdminActive(admin, true)}
+                                className="px-3 py-1 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-500 transition-all"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => updateAdminActive(admin, false)}
+                                className="px-3 py-1 rounded-lg text-xs font-semibold bg-red-700 text-white hover:bg-red-600 transition-all"
+                              >
+                                Decline
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => updateAdminActive(admin, false)}
+                              className="px-3 py-1 rounded-lg text-xs font-semibold bg-red-700 text-white hover:bg-red-600 transition-all"
+                            >
+                              Disable
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </section>
