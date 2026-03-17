@@ -7,12 +7,14 @@ type AuthContextType = {
   customerProfile: CustomerProfile | null;
   adminProfile: AdminProfile | null;
   loading: boolean;
+  profilesLoaded: boolean;
+  refreshProfiles: () => Promise<void>;
   signUp: (
     email: string,
     password: string,
     userData: Omit<CustomerProfile, 'id' | 'created_at'>,
     isAdminSignUp?: boolean
-  ) => Promise<void>;
+  ) => Promise<{ requiresAdminApproval: boolean; isMasterAdmin: boolean }>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   isAdmin: boolean;
@@ -25,6 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
   const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -32,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session?.user) {
         fetchProfiles(session.user.id);
       } else {
+        setProfilesLoaded(true);
         setLoading(false);
       }
     });
@@ -44,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           setCustomerProfile(null);
           setAdminProfile(null);
+          setProfilesLoaded(true);
           setLoading(false);
         }
       })();
@@ -53,6 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchProfiles = async (userId: string) => {
+    setLoading(true);
+    setProfilesLoaded(false);
     try {
       const [{ data: cust, error: custErr }, { data: admin, error: adminErr }] = await Promise.all([
         supabase.from('customer_profiles').select('*').eq('id', userId).maybeSingle(),
@@ -66,8 +73,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Error fetching profile:', error);
     } finally {
+      setProfilesLoaded(true);
       setLoading(false);
     }
+  };
+
+  const refreshProfiles = async () => {
+    const userId = user?.id;
+    if (!userId) return;
+    await fetchProfiles(userId);
   };
 
   const signUp = async (
@@ -76,6 +90,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     userData: Omit<CustomerProfile, 'id' | 'created_at'>,
     isAdminSignUp: boolean = false
   ) => {
+    let requiresAdminApproval = false;
+    let isMasterAdmin = false;
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -95,24 +112,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           },
         ]);
         if (adminInsertError) throw adminInsertError;
-
-        // If there is no master admin yet, promote this account
-        const { data: existingMaster, error: masterCheckError } = await supabase
-          .from('admin_profiles')
-          .select('id')
-          .eq('is_master_admin', true)
-          .limit(1);
-
-        if (masterCheckError) throw masterCheckError;
-
-        const isFirstMaster = !existingMaster || existingMaster.length === 0;
-        if (isFirstMaster) {
-          const { error: promoteError } = await supabase
-            .from('admin_profiles')
-            .update({ is_master_admin: true, is_active: true })
-            .eq('id', data.user.id);
-          if (promoteError) throw promoteError;
-        }
       } else {
         // Customer sign-up
         const { error: customerError } = await supabase.from('customer_profiles').insert([
@@ -125,7 +124,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ]);
         if (customerError) throw customerError;
       }
+
+      // Ensure UI updates immediately after registration
+      await fetchProfiles(data.user.id);
+
+      // Determine approval requirement from freshly loaded profile (RLS-safe)
+      if (isAdminSignUp) {
+        const { data: adminRow } = await supabase
+          .from('admin_profiles')
+          .select('is_active, is_master_admin')
+          .eq('id', data.user.id)
+          .maybeSingle();
+        isMasterAdmin = !!adminRow?.is_master_admin;
+        requiresAdminApproval = !adminRow?.is_active;
+      }
     }
+
+    return { requiresAdminApproval, isMasterAdmin };
   };
 
   const signIn = async (email: string, password: string) => {
@@ -135,6 +150,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (error) throw error;
+
+    // Ensure UI updates immediately after login
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user?.id) {
+      await fetchProfiles(sessionData.session.user.id);
+    }
   };
 
   const signOut = async () => {
@@ -147,6 +168,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     customerProfile,
     adminProfile,
     loading,
+    profilesLoaded,
+    refreshProfiles,
     signUp,
     signIn,
     signOut,

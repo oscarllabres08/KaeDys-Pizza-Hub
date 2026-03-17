@@ -15,7 +15,7 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, signOut } = useAuth();
 
   const [formData, setFormData] = useState({
     email: '',
@@ -37,11 +37,29 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
           setError('Password and Confirm Password do not match.');
           return;
         }
-        await signUp(formData.email, formData.password, {
-          full_name: formData.full_name,
-          phone: formData.phone,
-          address: formData.address,
-        }, adminSignUp);
+        const { requiresAdminApproval } = await signUp(
+          formData.email,
+          formData.password,
+          {
+            full_name: formData.full_name,
+            phone: formData.phone,
+            address: formData.address,
+          },
+          adminSignUp
+        );
+
+        if (adminSignUp && requiresAdminApproval) {
+          setSuccessMessage('Account created successfully. Please wait for Master Admin approval, then log in.');
+          await signOut();
+          setIsSignUp(false);
+          setFormData((p) => ({
+            ...p,
+            password: '',
+            confirmPassword: '',
+          }));
+          return;
+        }
+
         setSuccessMessage('Account created successfully');
         setLoading(false);
         setTimeout(() => {
@@ -173,7 +191,7 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 transition-all"
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
-                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                {showPassword ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
               </button>
             </div>
           </div>
@@ -199,7 +217,7 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-gray-400 hover:text-yellow-400 hover:bg-yellow-400/10 transition-all"
                   aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  {showConfirmPassword ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
                 </button>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase, AdminProfile, Announcement, GalleryImage, GameSettings, MenuItem, Order, OrderItem } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -9,6 +9,8 @@ import {
   ClipboardList,
   Loader2,
   Menu as MenuIcon,
+  Search,
+  SlidersHorizontal,
   X,
   LogOut,
 } from 'lucide-react';
@@ -27,6 +29,120 @@ const STATUS_LABELS: { id: Order['status']; label: string }[] = [
   { id: 'completed', label: 'Completed' },
   { id: 'cancelled', label: 'Cancelled' },
 ];
+
+const ADMIN_TAB_STORAGE_KEY = 'kaedys_admin_active_tab';
+
+function isTabId(value: string): value is TabId {
+  return (
+    value === 'orders' ||
+    value === 'menu' ||
+    value === 'announcements' ||
+    value === 'gallery' ||
+    value === 'game' ||
+    value === 'admins'
+  );
+}
+
+function AdminCategoryDropdown({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  options: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const activeLabel = value === 'All' ? 'All Categories' : value;
+
+  useEffect(() => {
+    const onPointerDown = (e: MouseEvent | PointerEvent) => {
+      const el = rootRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 pl-9 pr-10 py-2.5 rounded-xl border border-yellow-500/25 bg-black/40 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-yellow-400/60"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <SlidersHorizontal className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <span className="truncate">{activeLabel}</span>
+        <span className="ml-auto text-gray-400">▾</span>
+      </button>
+
+      {value !== 'All' && (
+        <button
+          type="button"
+          onClick={() => onChange('All')}
+          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-300 hover:text-white hover:bg-white/10"
+          aria-label="Clear category"
+          title="Clear"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+
+      {open && (
+        <div
+          className="absolute z-50 mt-2 w-full rounded-xl border border-yellow-500/30 bg-neutral-950/95 shadow-2xl overflow-hidden"
+          role="listbox"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              onChange('All');
+              setOpen(false);
+            }}
+            className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+              value === 'All'
+                ? 'bg-yellow-400/15 text-yellow-200'
+                : 'text-gray-200 hover:bg-white/5'
+            }`}
+          >
+            All Categories
+          </button>
+          <div className="h-px bg-yellow-500/15" />
+          <div className="max-h-56 overflow-auto">
+            {options.map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => {
+                  onChange(opt);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                  value === opt
+                    ? 'bg-yellow-400/15 text-yellow-200'
+                    : 'text-gray-200 hover:bg-white/5'
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 async function sendStatusEmail(order: Order, newStatus: Order['status']) {
   const webhookUrl = import.meta.env.VITE_STATUS_EMAIL_WEBHOOK;
@@ -52,7 +168,13 @@ async function sendStatusEmail(order: Order, newStatus: Order['status']) {
 
 export default function AdminPage() {
   const { signOut, adminProfile } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabId>('orders');
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    const fromHash = window.location.hash.replace('#', '');
+    if (isTabId(fromHash)) return fromHash;
+    const fromStorage = localStorage.getItem(ADMIN_TAB_STORAGE_KEY) || '';
+    if (isTabId(fromStorage)) return fromStorage;
+    return 'orders';
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isMasterAdmin = !!adminProfile?.is_master_admin;
 
@@ -63,6 +185,10 @@ export default function AdminPage() {
   const [menuLoading, setMenuLoading] = useState(false);
   const [menuModalOpen, setMenuModalOpen] = useState(false);
   const [editingMenuItem, setEditingMenuItem] = useState<MenuItem | null>(null);
+  const [deleteMenuItem, setDeleteMenuItem] = useState<MenuItem | null>(null);
+  const [deletingMenuItem, setDeletingMenuItem] = useState(false);
+  const [menuSearch, setMenuSearch] = useState('');
+  const [menuCategory, setMenuCategory] = useState<string>('All');
   const [menuForm, setMenuForm] = useState({
     category: 'Budget Meals',
     custom_category: '',
@@ -99,10 +225,83 @@ export default function AdminPage() {
     }
   }, [isMasterAdmin]);
 
-  const categoryOptions = useMemo(
-    () => ['Budget Meals', 'Pizza', 'Silog Meals', 'Drinks', 'Others'],
-    []
+  useEffect(() => {
+    localStorage.setItem(ADMIN_TAB_STORAGE_KEY, activeTab);
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${window.location.search}#${activeTab}`
+    );
+  }, [activeTab]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const tab = window.location.hash.replace('#', '');
+      if (isTabId(tab)) setActiveTab(tab);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isMasterAdmin && activeTab === 'admins') {
+      setActiveTab('orders');
+    }
+  }, [activeTab, isMasterAdmin]);
+
+  const categoryOptions = useMemo(() => {
+    const preferred = ['Budget Meals', 'Pizza', 'Silog Meals', 'Drinks'];
+    const set = new Set<string>();
+
+    for (const item of menuItems) {
+      const label =
+        item.category === 'Others' ? item.custom_category?.trim() || 'Others' : item.category?.trim();
+      if (label) set.add(label);
+    }
+
+    // Keep Others available for the add/edit form
+    set.add('Others');
+
+    const dynamic = [...set].filter((c) => !preferred.includes(c) && c !== 'Others').sort();
+    const orderedPreferred = preferred.filter((c) => set.has(c));
+    return [...orderedPreferred, ...dynamic, 'Others'];
+  }, [menuItems]);
+
+  const filterCategoryOptions = useMemo(
+    () => categoryOptions.filter((c) => c !== 'Others'),
+    [categoryOptions]
   );
+
+  const filteredMenuItems = useMemo(() => {
+    const q = menuSearch.trim().toLowerCase();
+    return menuItems.filter((item) => {
+      const categoryLabel =
+        item.category === 'Others' ? item.custom_category || 'Others' : item.category;
+
+      const matchesCategory = menuCategory === 'All' ? true : categoryLabel === menuCategory;
+      const matchesQuery = !q
+        ? true
+        : [
+            item.name,
+            item.description,
+            item.category,
+            item.custom_category || '',
+            categoryLabel,
+            String(item.price ?? ''),
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(q);
+
+      return matchesCategory && matchesQuery;
+    });
+  }, [menuCategory, menuItems, menuSearch]);
+
+  useEffect(() => {
+    if (menuCategory !== 'All' && !filterCategoryOptions.includes(menuCategory)) {
+      setMenuCategory('All');
+    }
+  }, [filterCategoryOptions, menuCategory]);
 
   const fetchOrders = async () => {
     setOrdersLoading(true);
@@ -349,14 +548,14 @@ export default function AdminPage() {
     }
   };
 
-  const navButtons = (
-    <>
+  const sidebarNav = (
+    <div className="space-y-2">
       <button
         onClick={() => handleSelectTab('orders')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
           activeTab === 'orders'
             ? 'bg-yellow-400 text-black shadow-lg'
-            : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
+            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
         }`}
       >
         <ClipboardList className="w-4 h-4" />
@@ -364,10 +563,10 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('menu')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
           activeTab === 'menu'
             ? 'bg-yellow-400 text-black shadow-lg'
-            : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
+            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
         }`}
       >
         <Pizza className="w-4 h-4" />
@@ -375,10 +574,10 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('announcements')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
           activeTab === 'announcements'
             ? 'bg-yellow-400 text-black shadow-lg'
-            : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
+            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
         }`}
       >
         <Megaphone className="w-4 h-4" />
@@ -386,10 +585,10 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('gallery')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
           activeTab === 'gallery'
             ? 'bg-yellow-400 text-black shadow-lg'
-            : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
+            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
         }`}
       >
         <ImageIcon className="w-4 h-4" />
@@ -397,10 +596,10 @@ export default function AdminPage() {
       </button>
       <button
         onClick={() => handleSelectTab('game')}
-        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
           activeTab === 'game'
             ? 'bg-yellow-400 text-black shadow-lg'
-            : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
+            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
         }`}
       >
         <Gamepad2 className="w-4 h-4" />
@@ -409,17 +608,17 @@ export default function AdminPage() {
       {isMasterAdmin && (
         <button
           onClick={() => handleSelectTab('admins')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+          className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
             activeTab === 'admins'
               ? 'bg-yellow-400 text-black shadow-lg'
-              : 'bg-neutral-900 text-gray-200 hover:bg-neutral-800'
+              : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
           }`}
         >
           <ClipboardList className="w-4 h-4" />
-          Admins
+          Admin Approvals
         </button>
       )}
-    </>
+    </div>
   );
 
   const handleSaveMenuItem = async () => {
@@ -478,13 +677,29 @@ export default function AdminPage() {
     }
   };
 
+  const handleConfirmDeleteMenuItem = async () => {
+    if (!deleteMenuItem) return;
+    setDeletingMenuItem(true);
+    try {
+      const { error } = await supabase.from('menu_items').delete().eq('id', deleteMenuItem.id);
+      if (error) throw error;
+      setDeleteMenuItem(null);
+      await fetchMenuItems();
+    } catch (error) {
+      console.error('Error deleting menu item', error);
+      alert('Failed to delete product. Please try again.');
+    } finally {
+      setDeletingMenuItem(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 pb-8">
       {/* Top bar */}
       <header className="sticky top-0 z-20 bg-black/80 backdrop-blur border-b border-yellow-500/20">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+        <div className="w-full px-4 md:px-6 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-full border-2 border-yellow-400 overflow-hidden bg-black">
+            <div className="h-11 w-11 md:h-12 md:w-12 rounded-full border-2 border-yellow-400 overflow-hidden bg-black">
               <img
                 src="/kaedypizza.jpg"
                 alt="KaeDy's Pizza Hub Logo"
@@ -492,21 +707,24 @@ export default function AdminPage() {
               />
             </div>
             <div className="leading-tight">
-              <p className="text-sm font-semibold text-yellow-300">KaeDy&apos;s Pizza Hub</p>
-              <p className="text-[11px] text-gray-400">Admin Dashboard</p>
+              <p className="text-base md:text-lg font-bold text-yellow-300">KaeDy&apos;s Pizza Hub</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[11px] md:text-xs text-gray-400">
+                  {adminProfile?.full_name ? `Admin: ${adminProfile.full_name}` : 'Admin Dashboard'}
+                </p>
+                {adminProfile?.full_name && (
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                      adminProfile?.is_master_admin
+                        ? 'bg-yellow-400/15 text-yellow-200 border-yellow-500/40'
+                        : 'bg-neutral-800 text-gray-200 border-neutral-700'
+                    }`}
+                  >
+                    {adminProfile?.is_master_admin ? 'MASTER ADMIN' : 'ADMIN'}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-
-          {/* Desktop nav + logout */}
-          <div className="hidden md:flex items-center gap-3">
-            <div className="flex flex-wrap gap-2 justify-end">{navButtons}</div>
-            <button
-              onClick={handleLogout}
-              className="ml-2 inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs font-semibold bg-red-500/20 text-red-200 hover:bg-red-500/30 transition-all"
-            >
-              <LogOut className="w-4 h-4" />
-              Logout
-            </button>
           </div>
 
           {/* Mobile hamburger */}
@@ -533,7 +751,7 @@ export default function AdminPage() {
             <div className="w-72 max-w-[80%] bg-gradient-to-b from-black to-neutral-900 border-l border-yellow-500/40 shadow-[0_0_25px_rgba(0,0,0,0.8)] p-4 flex flex-col gap-4">
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-2">
-                  <div className="h-8 w-8 rounded-full border-2 border-yellow-400 overflow-hidden bg-black">
+                  <div className="h-10 w-10 rounded-full border-2 border-yellow-400 overflow-hidden bg-black">
                     <img
                       src="/kaedypizza.jpg"
                       alt="KaeDy's Pizza Hub Logo"
@@ -541,8 +759,23 @@ export default function AdminPage() {
                     />
                   </div>
                   <div className="leading-tight">
-                    <p className="text-sm font-semibold text-yellow-300">KaeDy&apos;s Pizza Hub</p>
-                    <p className="text-[11px] text-gray-400">Admin</p>
+                    <p className="text-base font-bold text-yellow-300">KaeDy&apos;s Pizza Hub</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[11px] text-gray-400 truncate max-w-[165px]">
+                        {adminProfile?.full_name ? adminProfile.full_name : 'Admin'}
+                      </p>
+                      {adminProfile?.full_name && (
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                            adminProfile?.is_master_admin
+                              ? 'bg-yellow-400/15 text-yellow-200 border-yellow-500/40'
+                              : 'bg-neutral-800 text-gray-200 border-neutral-700'
+                          }`}
+                        >
+                          {adminProfile?.is_master_admin ? 'MASTER' : 'ADMIN'}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <button
@@ -656,15 +889,35 @@ export default function AdminPage() {
         )}
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 pt-6">
-        <div className="mb-6">
-          <h1 className="text-2xl md:text-3xl font-bold text-yellow-300 mb-1">
-            Admin Dashboard
-          </h1>
-          <p className="text-gray-300 text-sm md:text-base">
-            Manage orders, menu availability, promotions, gallery, and the discount game.
-          </p>
-        </div>
+      <div className="w-full px-4 md:px-6 pt-6">
+        <div className="flex gap-6">
+          {/* Desktop sidebar */}
+          <aside className="hidden md:flex w-64 shrink-0">
+            <div className="w-full sticky top-[88px] h-[calc(100vh-104px)] rounded-2xl border border-yellow-500/25 bg-black/30 p-3 flex flex-col">
+              <p className="text-xs font-semibold text-gray-400 px-2 py-2">Navigation</p>
+              {sidebarNav}
+              <div className="mt-auto pt-4">
+                <button
+                  onClick={handleLogout}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-500 transition-all"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout
+                </button>
+              </div>
+            </div>
+          </aside>
+
+          {/* Main content */}
+          <div className="flex-1 min-w-0">
+            <div className="mb-6">
+              <h1 className="text-2xl md:text-3xl font-bold text-yellow-300 mb-1">
+                Admin Dashboard
+              </h1>
+              <p className="text-gray-300 text-sm md:text-base">
+                Manage orders, menu availability, promotions, gallery, and the discount game.
+              </p>
+            </div>
 
         {menuModalOpen && (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
@@ -769,6 +1022,52 @@ export default function AdminPage() {
                 >
                   Save
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!!deleteMenuItem && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
+            <div className="w-full max-w-md bg-neutral-900 rounded-2xl border border-yellow-500/30 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between p-4 border-b border-yellow-500/20">
+                <h3 className="text-lg font-bold text-yellow-300">Remove product</h3>
+                <button
+                  type="button"
+                  onClick={() => (deletingMenuItem ? null : setDeleteMenuItem(null))}
+                  className="p-2 rounded-lg text-gray-300 hover:bg-yellow-500/10 hover:text-yellow-300 transition-all disabled:opacity-50"
+                  disabled={deletingMenuItem}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-4">
+                <p className="text-sm text-gray-200">
+                  Are you sure you want to remove{' '}
+                  <span className="font-semibold text-yellow-200">{deleteMenuItem.name}</span>?
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  This will permanently delete the product from the database. This action cannot be undone.
+                </p>
+
+                <div className="mt-5 flex flex-col sm:flex-row gap-2 sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteMenuItem(null)}
+                    disabled={deletingMenuItem}
+                    className="px-4 py-2.5 rounded-xl bg-neutral-800 text-gray-200 text-sm font-semibold hover:bg-neutral-700 transition-all disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDeleteMenuItem}
+                    disabled={deletingMenuItem}
+                    className="px-4 py-2.5 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-500 transition-all disabled:opacity-50"
+                  >
+                    {deletingMenuItem ? 'Removing...' : 'Remove'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -916,36 +1215,88 @@ export default function AdminPage() {
             <p className="text-sm text-gray-300 mb-4">
               Add, edit, and toggle availability. The public menu is loaded from the database.
             </p>
+
+            <div className="flex flex-col lg:flex-row lg:items-end gap-3 mb-4">
+              <div className="flex-1">
+                <label className="block text-xs font-semibold text-gray-400 mb-1">Search</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    value={menuSearch}
+                    onChange={(e) => setMenuSearch(e.target.value)}
+                    placeholder="Search by name, description, price..."
+                    className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-yellow-500/25 bg-black/40 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-yellow-400/60"
+                  />
+                  {menuSearch.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setMenuSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-300 hover:text-white hover:bg-white/10"
+                      aria-label="Clear search"
+                      title="Clear"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="w-full lg:w-64">
+                <label className="block text-xs font-semibold text-gray-400 mb-1">Category</label>
+                <AdminCategoryDropdown
+                  value={menuCategory}
+                  onChange={setMenuCategory}
+                  options={filterCategoryOptions}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 lg:ml-auto">
+                <span className="text-xs text-gray-400">Showing</span>
+                <span className="px-2 py-1 rounded-full text-xs font-semibold bg-yellow-400/15 text-yellow-200 border border-yellow-500/30">
+                  {filteredMenuItems.length}/{menuItems.length}
+                </span>
+              </div>
+            </div>
             {menuLoading ? (
               <div className="flex justify-center py-10">
                 <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
               </div>
             ) : menuItems.length === 0 ? (
               <p className="text-gray-300 text-center py-6">No menu items yet.</p>
+            ) : filteredMenuItems.length === 0 ? (
+              <p className="text-gray-300 text-center py-6">No matching products.</p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {menuItems.map((item) => (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {filteredMenuItems.map((item) => (
                   <div
                     key={item.id}
-                    className="border border-yellow-500/20 rounded-lg p-4 flex flex-col gap-3 bg-black/40"
+                    className="border border-yellow-500/20 rounded-lg p-4 bg-black/40 flex flex-col gap-4"
                   >
-                    <div className="flex items-start gap-3">
-                      <img
-                        src={item.image_url}
-                        alt={item.name}
-                        className="w-16 h-16 rounded-lg object-cover border border-yellow-500/20"
-                      />
-                      <div className="flex-1">
-                        <p className="font-semibold text-yellow-300 leading-tight">{item.name}</p>
-                        <p className="text-xs text-gray-400">
-                          {item.category === 'Others' ? item.custom_category || 'Others' : item.category}
-                        </p>
-                        <div className="mt-1 flex items-center justify-between gap-2">
-                          <span className="text-sm text-gray-200 font-semibold">
-                            ₱{Number(item.price).toFixed(2)}
-                          </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-[112px_1fr] gap-4">
+                      <div className="w-full sm:w-28 sm:shrink-0">
+                        <div className="aspect-square rounded-lg overflow-hidden border border-yellow-500/20 bg-black/40">
+                          <img
+                            src={item.image_url}
+                            alt={item.name}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-yellow-300 leading-tight truncate">
+                              {item.name}
+                            </p>
+                            <p className="text-xs text-gray-400 truncate">
+                              {item.category === 'Others'
+                                ? item.custom_category || 'Others'
+                                : item.category}
+                            </p>
+                          </div>
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                            className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                               item.is_available
                                 ? 'bg-green-500/20 text-green-300 border border-green-500/60'
                                 : 'bg-red-500/20 text-red-300 border border-red-500/60'
@@ -954,13 +1305,23 @@ export default function AdminPage() {
                             {item.is_available ? 'Available' : 'Unavailable'}
                           </span>
                         </div>
+
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="text-base text-gray-100 font-bold">
+                            ₱{Number(item.price).toFixed(2)}
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-sm text-gray-300 line-clamp-2">
+                          {item.description}
+                        </p>
                       </div>
                     </div>
-                    <p className="text-sm text-gray-300 line-clamp-2">{item.description}</p>
-                    <div className="flex gap-2 mt-auto">
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <button
                         onClick={() => toggleMenuAvailability(item)}
-                        className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                        className={`px-2.5 py-1.5 rounded-md text-[11px] font-semibold transition-all ${
                           item.is_available
                             ? 'bg-red-600 text-white hover:bg-red-500'
                             : 'bg-green-600 text-white hover:bg-green-500'
@@ -970,10 +1331,14 @@ export default function AdminPage() {
                       </button>
                       <button
                         onClick={() => {
+                          const resolvedCategory =
+                            item.category === 'Others'
+                              ? item.custom_category || 'Others'
+                              : item.category;
                           setEditingMenuItem(item);
                           setMenuForm({
-                            category: item.category,
-                            custom_category: item.custom_category || '',
+                            category: resolvedCategory,
+                            custom_category: resolvedCategory === 'Others' ? item.custom_category || '' : '',
                             name: item.name,
                             description: item.description,
                             price: String(item.price),
@@ -982,9 +1347,16 @@ export default function AdminPage() {
                           });
                           setMenuModalOpen(true);
                         }}
-                        className="px-3 py-2 rounded-lg text-xs font-semibold bg-yellow-400 text-black hover:bg-yellow-300 transition-all"
+                        className="px-2.5 py-1.5 rounded-md text-[15px] font-semibold bg-yellow-400 text-black hover:bg-yellow-300 transition-all"
                       >
                         Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteMenuItem(item)}
+                        className="px-2.5 py-1.5 rounded-md text-[13px] font-semibold bg-red-500/15 text-red-200 border border-red-500/30 hover:bg-red-500/25 transition-all"
+                      >
+                        Remove
                       </button>
                     </div>
                   </div>
@@ -1251,6 +1623,8 @@ export default function AdminPage() {
             )}
           </section>
         )}
+          </div>
+        </div>
       </div>
     </div>
   );
