@@ -30,7 +30,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
         <img
           src="./store.jpg"
           alt="KaeDy's Pizza Hub Store"
-          className="absolute inset-0 w-full h-full object-cover opacity-100"
+          className="absolute inset-0 w-full h-full object-cover opacity-100  "
         />
         <div className="absolute inset-0 bg-black bg-opacity-60"></div>
         <div className="relative z-10 text-center text-white px-4 animate-fadeIn">
