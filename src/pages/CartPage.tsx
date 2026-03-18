@@ -106,7 +106,7 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
     setDeliveryEmail(user?.email || '');
   }, [showCheckout, customerProfile, user?.email]);
 
-  const isBuyNowCheckout = startInCheckout && !!buyNowItems && buyNowItems.length > 0;
+  const isBuyNowCheckout = !!buyNowItems && buyNowItems.length > 0;
   const checkoutItems = isBuyNowCheckout ? buyNowItems : cart;
   const checkoutSubtotal = isBuyNowCheckout ? buyNowTotal : cartTotal;
   const checkoutDiscountPercent = isBuyNowCheckout ? 0 : discountPercent;
@@ -248,7 +248,7 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
     );
   }
 
-  if (cart.length === 0) {
+  if (checkoutItems.length === 0) {
     if (isBuyNowCheckout) {
       return (
         <>
@@ -351,46 +351,78 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
             </div>
 
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-200 mb-2">
-                Payment Method
-              </label>
-              <p className="text-xs text-gray-400 mb-3">
-                Choose how you want to pay. For GCash, upload a clear screenshot of your payment.
-              </p>
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              <div className="flex items-baseline justify-between gap-2 mb-2">
+                <label className="block text-sm font-semibold text-gray-100">
+                  Payment Method
+                </label>
+                <span className="text-[11px] text-gray-400">
+                  Choose how you want to pay
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <button
+                  type="button"
                   onClick={() => setPaymentMethod('COD')}
-                  className={`group p-4 rounded-xl border transition-all text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 ${
+                  className={`group flex items-start gap-3 rounded-2xl border px-4 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 ${
                     paymentMethod === 'COD'
-                      ? 'border-yellow-400 bg-yellow-500/10 shadow-[0_0_0_1px_rgba(250,204,21,0.25)]'
+                      ? 'border-yellow-400 bg-yellow-500/10 shadow-[0_0_0_1px_rgba(250,204,21,0.35)]'
                       : 'border-white/10 bg-black/30 hover:border-yellow-500/60 hover:bg-black/40'
                   }`}
                 >
-                  <p
-                    className={`font-semibold leading-tight ${
-                      paymentMethod === 'COD' ? 'text-yellow-200' : 'text-gray-100'
+                  <div
+                    className={`mt-0.5 h-8 w-8 rounded-full border text-xs font-bold flex items-center justify-center ${
+                      paymentMethod === 'COD'
+                        ? 'border-yellow-400 text-yellow-300 bg-yellow-500/10'
+                        : 'border-gray-500 text-gray-300 bg-black/40'
                     }`}
                   >
-                    Cash on Delivery
-                  </p>
-                  <p className="text-[11px] text-gray-400 mt-1">Pay when your order arrives.</p>
+                    COD
+                  </div>
+                  <div className="min-w-0">
+                    <p
+                      className={`text-sm font-semibold ${
+                        paymentMethod === 'COD' ? 'text-yellow-200' : 'text-gray-100'
+                      }`}
+                    >
+                      Cash on Delivery
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Pay when your order arrives.
+                    </p>
+                  </div>
                 </button>
+
                 <button
+                  type="button"
                   onClick={() => setPaymentMethod('GCash')}
-                  className={`group p-4 rounded-xl border transition-all text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 ${
+                  className={`group flex items-start gap-3 rounded-2xl border px-4 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 ${
                     paymentMethod === 'GCash'
-                      ? 'border-yellow-400 bg-yellow-500/10 shadow-[0_0_0_1px_rgba(250,204,21,0.25)]'
+                      ? 'border-yellow-400 bg-yellow-500/10 shadow-[0_0_0_1px_rgba(250,204,21,0.35)]'
                       : 'border-white/10 bg-black/30 hover:border-yellow-500/60 hover:bg-black/40'
                   }`}
                 >
-                  <p
-                    className={`font-semibold leading-tight ${
-                      paymentMethod === 'GCash' ? 'text-yellow-200' : 'text-gray-100'
+                  <div
+                    className={`mt-0.5 h-8 w-8 rounded-full border text-xs font-extrabold flex items-center justify-center ${
+                      paymentMethod === 'GCash'
+                        ? 'border-yellow-400 text-yellow-300 bg-yellow-500/10'
+                        : 'border-gray-500 text-gray-300 bg-black/40'
                     }`}
                   >
-                    GCash
-                  </p>
-                  <p className="text-[11px] text-gray-400 mt-1">Scan QR, then upload proof.</p>
+                    G
+                  </div>
+                  <div className="min-w-0">
+                    <p
+                      className={`text-sm font-semibold ${
+                        paymentMethod === 'GCash' ? 'text-yellow-200' : 'text-gray-100'
+                      }`}
+                    >
+                      GCash
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Scan QR, then upload proof.
+                    </p>
+                  </div>
                 </button>
               </div>
             </div>

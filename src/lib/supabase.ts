@@ -3,13 +3,28 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const isAdminApp =
+  typeof document !== 'undefined' && document.getElementById('admin-root') !== null;
+
+// Use different auth storage keys so admin/public sessions don't overwrite each other
+// when opened in different tabs of the same browser.
+const storageKey = isAdminApp ? 'kaedys_sb_admin_auth' : 'kaedys_sb_public_auth';
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storageKey,
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
 
 export type CustomerProfile = {
   id: string;
   full_name: string;
   phone: string;
   address: string | null;
+  email?: string | null;
   created_at: string;
 };
 
@@ -89,5 +104,7 @@ export type GamePlay = {
 export type GameSettings = {
   id: string;
   is_active: boolean;
+  falling_pizza_active?: boolean | null;
+  spin_wheel_active?: boolean | null;
   updated_at: string;
 };

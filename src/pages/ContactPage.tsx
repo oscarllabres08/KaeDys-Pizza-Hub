@@ -12,7 +12,7 @@ export default function ContactPage() {
     // Use lat/lng if you want directions to a specific pin
     lat: 13.558250498004698,
     lng:  123.27197823165085,
-    hours: 'Operating hours/day',
+    hours: 'Monday - Friday 9am - 9pm | Sat and Sun 9am - 10pm',
   };
 
   const cards: Array<{
@@ -36,14 +36,14 @@ export default function ContactPage() {
     },
     {
       title: 'Facebook',
-      value: contact.facebookUrl,
+      value: "KaeDy's Pizza Hub",
       href: contact.facebookUrl,
       external: true,
       icon: <Facebook className="w-5 h-5 text-yellow-300" />,
     },
     {
       title: 'Messenger',
-      value: `m.me/${contact.messengerPageId}`,
+      value: 'Message us on Messenger',
       href: `https://m.me/${contact.messengerPageId}`,
       external: true,
       icon: <MessageCircle className="w-5 h-5 text-yellow-300" />,

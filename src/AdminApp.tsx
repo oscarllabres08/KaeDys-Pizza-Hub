@@ -1,61 +1,11 @@
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AdminPage from './pages/AdminPage';
 import AuthForm from './components/AuthForm';
+import AdminOrderNotifications from './components/AdminOrderNotifications';
 import { LogOut, Home } from 'lucide-react';
-import { useEffect, useState } from 'react';
 
 function AdminContent() {
-  const { user, adminProfile, loading, profilesLoaded, refreshProfiles, signOut } = useAuth();
-  const [syncing, setSyncing] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const sync = async () => {
-      if (!user) return;
-      // If user just signed in/up, adminProfile can be null for a short time.
-      // Wait a moment and retry fetching before showing the "Administrators only" screen.
-      if (adminProfile) return;
-
-      setSyncing(true);
-      try {
-        for (let i = 0; i < 6; i++) {
-          if (cancelled) return;
-          await refreshProfiles();
-          if (cancelled) return;
-          if (adminProfile) break;
-          // small delay before retry
-          await new Promise((r) => setTimeout(r, 350));
-        }
-      } finally {
-        if (!cancelled) setSyncing(false);
-      }
-    };
-
-    sync();
-    return () => {
-      cancelled = true;
-    };
-    // We intentionally do NOT depend on adminProfile to avoid restarting the loop mid-sync.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
-
-  if (loading || (user && (!profilesLoaded || syncing))) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-black to-neutral-900 px-4">
-        <div className="w-full max-w-md bg-neutral-900/70 backdrop-blur rounded-2xl shadow-2xl p-8 border border-yellow-500/25 text-center">
-          <div className="mx-auto h-20 w-20 rounded-full border-4 border-yellow-400 overflow-hidden bg-black shadow-lg">
-            <img src="/kaedypizza.jpg" alt="KaeDy's Pizza Hub Logo" className="h-full w-full object-cover" />
-          </div>
-          <h1 className="mt-6 text-xl font-bold text-yellow-300">Loading admin dashboard</h1>
-          <p className="mt-2 text-sm text-gray-300">Please wait while we verify your account…</p>
-          <div className="mt-6 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-yellow-500/25 border-t-yellow-400" />
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const { user, adminProfile, signOut } = useAuth();
 
   if (!user) {
     return (
@@ -107,7 +57,12 @@ function AdminContent() {
     );
   }
 
-  return <AdminPage />;
+  return (
+    <>
+      <AdminOrderNotifications enabled={isApprovedAdmin} soundSrc="/sounds/new-order.wav" />
+      <AdminPage />
+    </>
+  );
 }
 
 export default function AdminApp() {

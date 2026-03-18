@@ -8,17 +8,19 @@ type OrderWithItems = Order & {
 };
 
 export default function ProfilePage() {
-  const { customerProfile } = useAuth();
+  const { customerProfile, loading: authLoading, profilesLoaded } = useAuth();
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [ordersLoading, setOrdersLoading] = useState(false);
 
   useEffect(() => {
+    if (!customerProfile) return;
     fetchOrders();
-  }, []);
+  }, [customerProfile]);
 
   const fetchOrders = async () => {
     if (!customerProfile) return;
 
+    setOrdersLoading(true);
     try {
       const { data: ordersData, error } = await supabase
         .from('orders')
@@ -34,7 +36,7 @@ export default function ProfilePage() {
     } catch (error) {
       console.error('Error fetching orders:', error);
     } finally {
-      setLoading(false);
+      setOrdersLoading(false);
     }
   };
 
@@ -61,10 +63,21 @@ export default function ProfilePage() {
     return status.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   };
 
-  if (!customerProfile) {
+  if (authLoading || !profilesLoaded) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-16 px-4 flex items-center justify-center">
         <p className="text-xl text-gray-300">Loading...</p>
+      </div>
+    );
+  }
+
+  if (!customerProfile) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-16 px-4 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-xl text-yellow-300 mb-2">You&apos;re not signed in.</p>
+          <p className="text-sm text-gray-300">Please sign in to view your profile and order history.</p>
+        </div>
       </div>
     );
   }
@@ -108,7 +121,7 @@ export default function ProfilePage() {
             <h2 className="text-2xl font-bold text-yellow-300">My Orders</h2>
           </div>
 
-          {loading ? (
+          {ordersLoading ? (
             <p className="text-center text-gray-300">Loading orders...</p>
           ) : orders.length === 0 ? (
             <p className="text-center text-gray-300">No orders yet</p>

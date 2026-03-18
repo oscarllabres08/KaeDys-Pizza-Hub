@@ -120,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             full_name: userData.full_name,
             phone: userData.phone,
             address: userData.address ?? null,
+            email,
           },
         ]);
         if (customerError) throw customerError;

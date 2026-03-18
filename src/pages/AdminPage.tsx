@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { supabase, AdminProfile, Announcement, GalleryImage, GameSettings, MenuItem, Order, OrderItem } from '../lib/supabase';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { supabase, AdminProfile, Announcement, CustomerProfile, GalleryImage, GameSettings, MenuItem, Order, OrderItem } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Pizza,
@@ -212,18 +212,7 @@ export default function AdminPage() {
 
   const [admins, setAdmins] = useState<AdminProfile[]>([]);
   const [adminsLoading, setAdminsLoading] = useState(false);
-
-  useEffect(() => {
-    // Always load admin data for any logged-in user on the admin site
-    fetchOrders();
-    fetchMenuItems();
-    fetchAnnouncements();
-    fetchGallery();
-    fetchGameSettings();
-    if (isMasterAdmin) {
-      fetchAdmins();
-    }
-  }, [isMasterAdmin]);
+  const [customersById, setCustomersById] = useState<Record<string, CustomerProfile>>({});
 
   useEffect(() => {
     localStorage.setItem(ADMIN_TAB_STORAGE_KEY, activeTab);
@@ -303,7 +292,7 @@ export default function AdminPage() {
     }
   }, [filterCategoryOptions, menuCategory]);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     setOrdersLoading(true);
     try {
       const { data, error } = await supabase
@@ -313,13 +302,30 @@ export default function AdminPage() {
         .limit(50);
 
       if (error) throw error;
-      setOrders((data || []) as OrderWithItems[]);
+      const ordersData = (data || []) as OrderWithItems[];
+      setOrders(ordersData);
+
+      const userIds = Array.from(new Set(ordersData.map((o) => o.user_id).filter(Boolean)));
+      if (userIds.length > 0) {
+        const { data: customers, error: custError } = await supabase
+          .from('customer_profiles')
+          .select('*')
+          .in('id', userIds);
+        if (custError) throw custError;
+        const map: Record<string, CustomerProfile> = {};
+        for (const c of customers || []) {
+          map[c.id] = c as CustomerProfile;
+        }
+        setCustomersById(map);
+      } else {
+        setCustomersById({});
+      }
     } catch (error) {
       console.error('Error loading orders', error);
     } finally {
       setOrdersLoading(false);
     }
-  };
+  }, []);
 
   const fetchMenuItems = async () => {
     setMenuLoading(true);
@@ -382,6 +388,53 @@ export default function AdminPage() {
       setAnnLoading(false);
     }
   };
+
+  // When notification system detects a new order (via polling),
+  // refresh the orders list if the Orders tab is currently active.
+  useEffect(() => {
+    const handler = () => {
+      if (activeTab === 'orders') {
+        fetchOrders();
+      }
+    };
+    window.addEventListener('kaedys:new-order', handler as EventListener);
+    return () => window.removeEventListener('kaedys:new-order', handler as EventListener);
+  }, [activeTab, fetchOrders]);
+
+  useEffect(() => {
+    // Always load admin data for any logged-in user on the admin site
+    fetchOrders();
+    fetchMenuItems();
+    fetchAnnouncements();
+    fetchGallery();
+    fetchGameSettings();
+    if (isMasterAdmin) {
+      fetchAdmins();
+    }
+  }, [isMasterAdmin, fetchOrders]);
+
+  // Realtime updates for orders list:
+  // re-fetch only when there are INSERT/UPDATE/DELETE events on orders
+  // (no constant polling while the admin is reading).
+  useEffect(() => {
+    const channel = supabase
+      .channel('admin-orders-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        () => {
+          // Only refresh when Orders tab is visible to avoid surprise jumps
+          if (activeTab === 'orders') {
+            fetchOrders();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeTab, fetchOrders]);
 
   const createAnnouncement = async () => {
     if (!newAnnouncement.title || !newAnnouncement.content) return;
@@ -518,18 +571,41 @@ export default function AdminPage() {
     }
   };
 
-  const toggleGameActive = async () => {
+  const toggleFallingPizzaActive = async () => {
     if (!gameSettings) return;
     try {
       const { error } = await supabase
         .from('game_settings')
-        .update({ is_active: !gameSettings.is_active })
+        .update({
+          is_active: !(gameSettings.falling_pizza_active ?? gameSettings.is_active),
+          falling_pizza_active: !(gameSettings.falling_pizza_active ?? gameSettings.is_active),
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', gameSettings.id);
 
       if (error) throw error;
       await fetchGameSettings();
     } catch (error) {
       console.error('Error updating game settings', error);
+    }
+  };
+
+  const toggleSpinWheelActive = async () => {
+    if (!gameSettings) return;
+    try {
+      const current = (gameSettings.spin_wheel_active ?? false) === true;
+      const { error } = await supabase
+        .from('game_settings')
+        .update({
+          spin_wheel_active: !current,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', gameSettings.id);
+
+      if (error) throw error;
+      await fetchGameSettings();
+    } catch (error) {
+      console.error('Error updating spin wheel settings', error);
     }
   };
 
@@ -1087,100 +1163,177 @@ export default function AdminPage() {
               <p className="text-gray-300 text-center py-6">No orders yet.</p>
             ) : (
               <div className="space-y-4">
-                {orders.map((order) => (
+                {orders.map((order) => {
+                  const customer = customersById[order.user_id];
+                  return (
                   <div
                     key={order.id}
                     className="border border-yellow-500/20 rounded-2xl p-4 md:p-5 hover:shadow-md transition-all bg-black/40"
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-base font-bold text-yellow-200">
-                            Order #{order.id.slice(0, 8)}
-                          </p>
+                    <div className="grid gap-4 lg:grid-cols-[3fr_7fr]">
+                      {/* Left: customer info */}
+                      <div className="rounded-2xl border border-yellow-500/20 bg-black/30 p-4">
+                        <div className="flex items-center gap-3 mb-3">
+                          <p className="text-base font-bold text-yellow-200">Customer Information</p>
+                          <span className="ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold border border-yellow-500/40 bg-black/40 text-gray-200">
+                            {order.order_items.length} item{order.order_items.length !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="rounded-xl border border-yellow-500/15 bg-black/25 p-3">
+                            <p className="text-[11px] font-semibold text-gray-400">Name</p>
+                            <p className="mt-1 text-gray-100 font-semibold leading-snug break-words">
+                              {customer?.full_name || 'Unknown customer'}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-yellow-500/15 bg-black/25 p-3">
+                            <p className="text-[11px] font-semibold text-gray-400">Email</p>
+                            <p className="mt-1 text-gray-200 leading-snug break-words">
+                              {customer?.email || 'No email'}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-yellow-500/15 bg-black/25 p-3">
+                            <p className="text-[11px] font-semibold text-gray-400">Contact no.</p>
+                            <p className="mt-1 text-gray-100 leading-snug break-words">
+                              {order.contact_phone || customer?.phone || 'No phone'}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-yellow-500/15 bg-black/25 p-3">
+                            <p className="text-[11px] font-semibold text-gray-400">Address</p>
+                            <p className="mt-1 text-gray-200 leading-snug break-words">
+                              {order.delivery_address || customer?.address || 'No address provided'}
+                            </p>
+                          </div>
+
+                          {(() => {
+                            // Cart checkout currently appends "Customer: ...\nEmail: ..." to notes.
+                            // In admin UI, show only the actual customer instruction part.
+                            const raw = (order.notes || '').trim();
+                            if (!raw) return null;
+                            const instruction = raw.split('\n\nCustomer:')[0]?.trim();
+                            if (!instruction) return null;
+                            return (
+                              <div className="rounded-xl border border-yellow-500/15 bg-black/25 p-3">
+                                <p className="text-[11px] font-semibold text-gray-400">
+                                  Special instructions
+                                </p>
+                                <p className="mt-1 text-sm text-gray-200 whitespace-pre-wrap break-words">
+                                  {instruction}
+                                </p>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* Right: order details */}
+                      <div className="rounded-2xl border border-yellow-500/20 bg-black/30 p-4 flex flex-col">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-base font-bold text-yellow-200">
+                              Order #{order.id.slice(0, 8)}
+                            </p>
+                            <p className="text-sm text-gray-400">
+                              {new Date(order.created_at).toLocaleString(undefined, {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                                hour: 'numeric',
+                                minute: '2-digit',
+                              })}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
                           <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-white/10 bg-black/30 text-gray-200">
                             {order.payment_method}
                           </span>
-                        </div>
-                        <p className="text-[11px] text-gray-500 mt-1">
-                          {new Date(order.created_at).toLocaleString()}
-                        </p>
-                        <p className="text-sm text-gray-300 mt-2 break-words">
-                          {order.delivery_address}
-                        </p>
-                      </div>
-
-                      <div className="sm:text-right">
-                        <p className="text-xs text-gray-400">Total</p>
-                        <p className="text-lg font-extrabold text-yellow-300 leading-tight">
-                          ₱{order.final_amount.toFixed(2)}
-                        </p>
-                        {order.discount_amount > 0 && (
-                          <p className="text-[11px] text-green-300/90 mt-1">
-                            Discount: -₱{order.discount_amount.toFixed(2)}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 rounded-xl border border-yellow-500/15 bg-black/30 p-3">
-                      <p className="text-xs font-semibold text-gray-300 mb-2">Items</p>
-                      <div className="space-y-2">
-                        {order.order_items.map((item) => {
-                          const menuItem = menuItems.find((m) => m.id === item.menu_item_id);
-                          return (
-                            <div
-                              key={item.id}
-                              className="flex items-center justify-between gap-3 rounded-lg bg-black/40 px-2 py-2"
+                          <div className="ml-auto flex items-center gap-2">
+                            <span className="text-xs text-gray-400">Status</span>
+                            <select
+                              value={order.status}
+                              onChange={(e) => updateOrderStatus(order, e.target.value as Order['status'])}
+                              className="text-sm font-semibold border border-yellow-500/35 rounded-xl px-3 py-2 bg-black/50 text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
                             >
-                              <div className="flex items-center gap-3 min-w-0">
-                                {menuItem && (
-                                  <img
-                                    src={menuItem.image_url}
-                                    alt={item.menu_item_name}
-                                    className="w-14 h-14 rounded-lg object-cover border border-yellow-500/30"
-                                  />
-                                )}
-                                <div className="min-w-0">
-                                  <p className="text-sm text-gray-100 leading-snug break-words">
-                                    <span className="text-gray-300 font-semibold">{item.quantity}×</span>{' '}
-                                    {item.menu_item_name}
-                                  </p>
-                                  <p className="text-[11px] text-gray-400">
-                                    ₱{item.price.toFixed(2)} each
+                              {STATUS_LABELS.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {s.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 rounded-xl border border-yellow-500/15 bg-black/30 p-3">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <p className="text-xs font-semibold text-gray-300">Items</p>
+                            <p className="text-xs text-gray-500">
+                              {order.order_items.length} item{order.order_items.length !== 1 ? 's' : ''}
+                            </p>
+                          </div>
+                          <div className="space-y-2 max-h-[280px] overflow-auto pr-1">
+                            {order.order_items.map((item) => {
+                              const menuItem = menuItems.find((m) => m.id === item.menu_item_id);
+                              return (
+                                <div
+                                  key={item.id}
+                                  className="flex items-center justify-between gap-3 rounded-lg bg-black/40 px-2 py-2"
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    {menuItem && (
+                                      <img
+                                        src={menuItem.image_url}
+                                        alt={item.menu_item_name}
+                                        className="w-16 h-16 rounded-lg object-cover border border-yellow-500/30"
+                                      />
+                                    )}
+                                    <div className="min-w-0">
+                                      <p className="text-sm text-gray-100 leading-snug break-words">
+                                        <span className="text-gray-300 font-semibold">{item.quantity}×</span>{' '}
+                                        {item.menu_item_name}
+                                      </p>
+                                      <p className="text-[11px] text-gray-400">
+                                        ₱{item.price.toFixed(2)} each
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <p className="text-sm font-semibold text-yellow-200 whitespace-nowrap">
+                                    ₱{item.subtotal.toFixed(2)}
                                   </p>
                                 </div>
-                              </div>
-                              <p className="text-sm font-semibold text-yellow-200 whitespace-nowrap">
-                                ₱{item.subtotal.toFixed(2)}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                              );
+                            })}
+                          </div>
+                        </div>
 
-                    <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-yellow-500/15 pt-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">Status</span>
-                        <select
-                          value={order.status}
-                          onChange={(e) => updateOrderStatus(order, e.target.value as Order['status'])}
-                          className="text-sm font-semibold border border-yellow-500/35 rounded-xl px-3 py-2 bg-black/50 text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                        >
-                          {STATUS_LABELS.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.label}
-                            </option>
-                          ))}
-                        </select>
+                        {/* Bottom summary */}
+                        <div className="mt-4 pt-4 border-t border-yellow-500/15 flex items-end justify-between gap-3">
+                          <div className="text-xs text-gray-400">
+                            <p>Summary</p>
+                            {order.discount_amount > 0 ? (
+                              <p className="text-[11px] text-green-300/90 mt-1">
+                                Discount: -₱{order.discount_amount.toFixed(2)}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-gray-500 mt-1">No discount</p>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-gray-400">Total</p>
+                            <p className="text-xl font-extrabold text-yellow-300 leading-tight">
+                              ₱{order.final_amount.toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-xs text-gray-500">
-                        Items: <span className="text-gray-300 font-semibold">{order.order_items.length}</span>
-                      </p>
                     </div>
                   </div>
-                ))}
+                );})}
               </div>
             )}
           </section>
@@ -1506,7 +1659,7 @@ export default function AdminPage() {
               <h2 className="text-xl font-bold text-yellow-300">Discount Game</h2>
             </div>
             <p className="text-sm text-gray-300 mb-4">
-              Toggle the Falling Pizza discount game on or off for all customers.
+              Toggle each discount game on or off for all customers.
             </p>
 
             {gameLoading || !gameSettings ? (
@@ -1514,28 +1667,62 @@ export default function AdminPage() {
                 <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
               </div>
             ) : (
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-semibold text-gray-200">
-                    Game is currently{' '}
-                    <span className={gameSettings.is_active ? 'text-green-400' : 'text-red-400'}>
-                      {gameSettings.is_active ? 'ACTIVE' : 'DISABLED'}
-                    </span>
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Last updated: {new Date(gameSettings.updated_at).toLocaleString()}
-                  </p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-4 rounded-xl border border-yellow-500/20 bg-black/30 p-3">
+                  <div>
+                    <p className="font-semibold text-gray-200">
+                      Falling Pizza is{' '}
+                      <span
+                        className={
+                          (gameSettings.falling_pizza_active ?? gameSettings.is_active)
+                            ? 'text-green-400'
+                            : 'text-red-400'
+                        }
+                      >
+                        {(gameSettings.falling_pizza_active ?? gameSettings.is_active) ? 'ACTIVE' : 'DISABLED'}
+                      </span>
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Last updated: {new Date(gameSettings.updated_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <button
+                    onClick={toggleFallingPizzaActive}
+                    className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
+                      (gameSettings.falling_pizza_active ?? gameSettings.is_active)
+                        ? 'bg-red-500/20 text-red-200 hover:bg-red-500/30'
+                        : 'bg-green-500/20 text-green-200 hover:bg-green-500/30'
+                    }`}
+                  >
+                    {(gameSettings.falling_pizza_active ?? gameSettings.is_active) ? 'Disable' : 'Enable'}
+                  </button>
                 </div>
-                <button
-                  onClick={toggleGameActive}
-                  className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
-                    gameSettings.is_active
-                      ? 'bg-red-500/20 text-red-200 hover:bg-red-500/30'
-                      : 'bg-green-500/20 text-green-200 hover:bg-green-500/30'
-                  }`}
-                >
-                  {gameSettings.is_active ? 'Disable Game' : 'Enable Game'}
-                </button>
+
+                <div className="flex items-center justify-between gap-4 rounded-xl border border-yellow-500/20 bg-black/30 p-3">
+                  <div>
+                    <p className="font-semibold text-gray-200">
+                      Spin the Wheel is{' '}
+                      <span
+                        className={(gameSettings.spin_wheel_active ?? false) ? 'text-green-400' : 'text-red-400'}
+                      >
+                        {(gameSettings.spin_wheel_active ?? false) ? 'ACTIVE' : 'DISABLED'}
+                      </span>
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Last updated: {new Date(gameSettings.updated_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <button
+                    onClick={toggleSpinWheelActive}
+                    className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all ${
+                      (gameSettings.spin_wheel_active ?? false)
+                        ? 'bg-red-500/20 text-red-200 hover:bg-red-500/30'
+                        : 'bg-green-500/20 text-green-200 hover:bg-green-500/30'
+                    }`}
+                  >
+                    {(gameSettings.spin_wheel_active ?? false) ? 'Disable' : 'Enable'}
+                  </button>
+                </div>
               </div>
             )}
           </section>

@@ -29,26 +29,32 @@ export default function GamePage({ onNavigate }: GamePageProps) {
 
   useEffect(() => {
     checkGameSettings();
+    // Temporarily allow unlimited plays while tweaking the game.
+    // Once finalized, re-enable weekly limit by calling checkLastPlayed() for logged-in users.
     if (user) {
-      checkLastPlayed();
+      setCanPlay(true);
+      setLastPlayed(null);
+      // checkLastPlayed();
     }
   }, [user]);
 
   useEffect(() => {
     if (gameActive) {
       const gameInterval = setInterval(() => {
-        setPizzas((prev) =>
-          prev
+        setPizzas((prev) => {
+          const moved = prev
             .map((pizza) => ({
               ...pizza,
               y: pizza.y + pizza.speed,
             }))
-            .filter((pizza) => pizza.y < window.innerHeight)
-        );
+            .filter((pizza) => pizza.y < window.innerHeight);
 
-        if (Math.random() < 0.3) {
-          addPizza();
-        }
+          // Limit how many pizzas are on screen at once (avoid big clusters)
+          if (moved.length < 6 && Math.random() < 0.18) {
+            return addPizza(moved);
+          }
+          return moved;
+        });
       }, 100);
 
       const timerInterval = setInterval(() => {
@@ -71,11 +77,11 @@ export default function GamePage({ onNavigate }: GamePageProps) {
   const checkGameSettings = async () => {
     const { data } = await supabase
       .from('game_settings')
-      .select('is_active')
+      .select('falling_pizza_active,is_active')
       .single();
 
     if (data) {
-      setGameEnabled(data.is_active);
+      setGameEnabled((data.falling_pizza_active ?? data.is_active) === true);
     }
   };
 
@@ -83,15 +89,15 @@ export default function GamePage({ onNavigate }: GamePageProps) {
     if (!user) return;
 
     const today = new Date();
-    const sunday = new Date(today);
-    sunday.setDate(today.getDate() - today.getDay());
-    sunday.setHours(0, 0, 0, 0);
+    const weekAgo = new Date(today);
+    weekAgo.setDate(today.getDate() - 7);
+    weekAgo.setHours(0, 0, 0, 0);
 
     const { data } = await supabase
       .from('game_plays')
       .select('played_at')
       .eq('user_id', user.id)
-      .gte('played_at', sunday.toISOString())
+      .gte('played_at', weekAgo.toISOString())
       .order('played_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -104,18 +110,22 @@ export default function GamePage({ onNavigate }: GamePageProps) {
     }
   };
 
-  const addPizza = () => {
-    const points = [1, 2, 3, 5][Math.floor(Math.random() * 4)];
-    setPizzas((prev) => [
-      ...prev,
+  const addPizza = (current: FallingPizza[]): FallingPizza[] => {
+    // 20% chance the pizza has value (1 point), 80% chance 0 points
+    const hasValue = Math.random() < 0.2;
+    const points = hasValue ? 1 : 0;
+
+    return [
+      ...current,
       {
         id: Date.now(),
         x: Math.random() * (window.innerWidth - 80),
         y: -80,
         points,
-        speed: 3 + Math.random() * 3,
+        // Much faster fall speed to make game challenging
+        speed: 7 + Math.random() * 5,
       },
-    ]);
+    ];
   };
 
   const handlePizzaClick = (id: number, points: number) => {
@@ -129,16 +139,11 @@ export default function GamePage({ onNavigate }: GamePageProps) {
       return;
     }
 
-    const today = new Date();
-    if (today.getDay() !== 0) {
-      alert('The discount game is only available on Sundays.');
-      return;
-    }
-
-    if (!canPlay) {
-      alert('You can only play once per week on Sunday!');
-      return;
-    }
+    // Weekly play limit temporarily disabled for testing/tuning.
+    // if (!canPlay) {
+    //   alert('You can only play the discount game once per week!');
+    //   return;
+    // }
 
     setGameActive(true);
     setScore(0);
@@ -250,7 +255,7 @@ export default function GamePage({ onNavigate }: GamePageProps) {
             Tap the falling pizzas to earn points and win discounts!
           </p>
           <p className="text-sm text-yellow-400 font-semibold">
-            Play once per week on Sunday • Maximum 10% discount
+            Maximum 10% discount per game
           </p>
         </div>
 
@@ -262,7 +267,7 @@ export default function GamePage({ onNavigate }: GamePageProps) {
             <h2 className="text-2xl font-bold text-yellow-300 mb-4">How to Play</h2>
             <div className="text-left max-w-md mx-auto mb-8 space-y-2">
               <p className="text-gray-300">• Tap falling pizzas to earn points</p>
-              <p className="text-gray-300">• Each pizza has different point values (1-5)</p>
+              <p className="text-gray-300">• Some pizzas give 1 point, most give 0</p>
               <p className="text-gray-300">• You have 10 seconds to score</p>
               <p className="text-gray-300">• Your score equals discount percentage</p>
               <p className="text-gray-300">• Maximum 10% discount per game</p>
@@ -323,9 +328,6 @@ export default function GamePage({ onNavigate }: GamePageProps) {
                 >
                   <div className="relative">
                     <Pizza className="w-16 h-16 text-yellow-400" fill="currentColor" />
-                    <span className="absolute inset-0 flex items-center justify-center text-black font-bold text-xl">
-                      {pizza.points}
-                    </span>
                   </div>
                 </button>
               ))}

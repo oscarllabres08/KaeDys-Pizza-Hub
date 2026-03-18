@@ -10,6 +10,7 @@ type NavigationProps = {
 
 export default function Navigation({ currentPage, onNavigate }: NavigationProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const { user, signOut } = useAuth();
   const { cartCount } = useCart();
 
@@ -17,18 +18,24 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
     { name: 'Home', id: 'home' },
     { name: 'Menu', id: 'menu' },
     { name: 'Game', id: 'game' },
+    { name: 'Spin Wheel', id: 'spin' },
     { name: 'Gallery', id: 'gallery' },
     { name: 'About', id: 'about' },
     { name: 'Contact', id: 'contact' },
   ];
 
-  const handleSignOut = async () => {
-    if (!window.confirm('Are you sure you want to log out?')) return;
+  const handleSignOutClick = () => {
+    setShowLogoutModal(true);
+  };
+
+  const handleConfirmSignOut = async () => {
     try {
       await signOut();
       window.location.reload();
     } catch (error) {
       console.error('Error signing out:', error);
+    } finally {
+      setShowLogoutModal(false);
     }
   };
 
@@ -90,7 +97,7 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                 </button>
 
                 <button
-                  onClick={handleSignOut}
+                  onClick={handleSignOutClick}
                   className="px-3 py-2 rounded-md hover:bg-yellow-500 hover:text-black transition-all"
                 >
                   <LogOut className="w-5 h-5" />
@@ -174,7 +181,7 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                   </button>
 
                   <button
-                    onClick={handleSignOut}
+                    onClick={handleSignOutClick}
                     className="block w-full text-left px-3 py-2 rounded-lg text-base font-semibold text-yellow-300 hover:bg-yellow-500 hover:text-black transition-all"
                   >
                     Sign Out
@@ -197,6 +204,36 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {showLogoutModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-neutral-950 border border-yellow-500/40 shadow-2xl">
+            <div className="px-5 pt-5 pb-4">
+              <h2 className="text-lg font-semibold text-yellow-300 mb-2">
+                Sign out
+              </h2>
+              <p className="text-sm text-gray-200 mb-5">
+                Are you sure you want to log out of your account?
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowLogoutModal(false)}
+                  className="px-4 py-2 rounded-full text-sm font-medium bg-neutral-800 text-gray-100 hover:bg-neutral-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSignOut}
+                  className="px-4 py-2 rounded-full text-sm font-semibold bg-yellow-400 text-black hover:bg-yellow-300 shadow-md transition-colors"
+                >
+                  Log out
+                </button>
+              </div>
             </div>
           </div>
         </div>

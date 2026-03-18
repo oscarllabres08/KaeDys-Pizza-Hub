@@ -90,7 +90,8 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
     startBuyNow(item, qty);
     // reset quantity back to 1 for this item
     setQuantities((prev) => ({ ...prev, [item.id]: 1 }));
-    onNavigate('checkout');
+    // Show Buy Now item in the cart-style view first, then let user proceed to checkout
+    onNavigate('cart');
   };
 
   return (
