@@ -18,7 +18,6 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
     { name: 'Home', id: 'home' },
     { name: 'Menu', id: 'menu' },
     { name: 'Game', id: 'game' },
-    { name: 'Spin Wheel', id: 'spin' },
     { name: 'Gallery', id: 'gallery' },
     { name: 'About', id: 'about' },
     { name: 'Contact', id: 'contact' },

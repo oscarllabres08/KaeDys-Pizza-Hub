@@ -85,8 +85,9 @@ export default function ContactPage() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               {cards.map((c) => {
+                const isLongText = c.title === 'Address' || c.title === 'Hours';
                 const content = (
-                  <div className="flex items-center gap-4 min-w-0">
+                  <div className={`flex gap-4 min-w-0 ${isLongText ? 'items-start' : 'items-center'}`}>
                     <div className="w-11 h-11 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
                       {c.icon}
                     </div>
@@ -94,7 +95,11 @@ export default function ContactPage() {
                       <p className="text-sm font-semibold text-yellow-300 leading-tight">
                         {c.title}
                       </p>
-                      <p className="text-sm text-gray-200/90 truncate">
+                      <p
+                        className={`text-sm text-gray-200/90 ${
+                          isLongText ? 'whitespace-normal break-words leading-snug' : 'truncate'
+                        }`}
+                      >
                         {c.value}
                       </p>
                     </div>

@@ -1,4 +1,4 @@
-import { Pizza, Phone, Mail, MapPin } from 'lucide-react';
+import { Pizza } from 'lucide-react';
 
 export default function Footer() {
   return (
@@ -15,32 +15,9 @@ export default function Footer() {
             </p>
           </div>
 
-          <div className="hidden md:block text-center">
-            <h4 className="font-bold text-lg mb-4 text-yellow-300">Contact Us</h4>
-            <div className="space-y-2 text-sm text-yellow-200">
-              <div className="flex items-center justify-center">
-                <Phone className="w-4 h-4 mr-2" />
-                <span>+63 123 456 7890</span>
-              </div>
-              <div className="flex items-center justify-center">
-                <Mail className="w-4 h-4 mr-2" />
-                <span>info@kaedyspizza.com</span>
-              </div>
-              <div className="flex items-center justify-center">
-                <MapPin className="w-4 h-4 mr-2" />
-                <span>123 Pizza Street, City</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="hidden md:block text-center md:text-right">
-            <h4 className="font-bold text-lg mb-4 text-yellow-300">Hours</h4>
-            <div className="space-y-1 text-sm text-yellow-200">
-              <p>Monday - Thursday: 10am - 10pm</p>
-              <p>Friday - Saturday: 10am - 11pm</p>
-              <p>Sunday: 11am - 9pm</p>
-            </div>
-          </div>
+          {/* Contact + Hours removed to keep footer compact on mobile */}
+          <div className="hidden md:block" />
+          <div className="hidden md:block" />
         </div>
 
         <div className="border-t border-yellow-500/40 mt-8 pt-6 text-center text-sm text-yellow-200">

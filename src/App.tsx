@@ -4,7 +4,6 @@ import Footer from './components/Footer';
 import HomePage from './pages/HomePage';
 import MenuPage from './pages/MenuPage';
 import GamePage from './pages/GamePage';
-import SpinWheelPage from './pages/SpinWheelPage';
 import GalleryPage from './pages/GalleryPage';
 import AboutPage from './pages/AboutPage';
 import ContactPage from './pages/ContactPage';
@@ -19,7 +18,6 @@ type PageId =
   | 'home'
   | 'menu'
   | 'game'
-  | 'spin'
   | 'gallery'
   | 'about'
   | 'contact'
@@ -34,13 +32,13 @@ function AppContent() {
 
   useEffect(() => {
     const hash = window.location.hash.replace('#', '') as PageId | '';
-    if (hash && ['home', 'menu', 'game', 'spin', 'gallery', 'about', 'contact', 'cart', 'checkout', 'profile', 'auth'].includes(hash)) {
+    if (hash && ['home', 'menu', 'game', 'gallery', 'about', 'contact', 'cart', 'checkout', 'profile', 'auth'].includes(hash)) {
       setCurrentPage(hash as PageId);
     }
 
     const onHashChange = () => {
       const newHash = window.location.hash.replace('#', '') as PageId | '';
-      if (newHash && ['home', 'menu', 'game', 'spin', 'gallery', 'about', 'contact', 'cart', 'checkout', 'profile', 'auth'].includes(newHash)) {
+      if (newHash && ['home', 'menu', 'game', 'gallery', 'about', 'contact', 'cart', 'checkout', 'profile', 'auth'].includes(newHash)) {
         setCurrentPage(newHash as PageId);
       }
     };
@@ -65,9 +63,6 @@ function AppContent() {
       break;
     case 'game':
       content = <GamePage onNavigate={handleNavigate} />;
-      break;
-    case 'spin':
-      content = <SpinWheelPage onNavigate={handleNavigate} />;
       break;
     case 'gallery':
       content = <GalleryPage />;
