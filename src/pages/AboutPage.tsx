@@ -22,9 +22,6 @@ export default function AboutPage() {
           <h1 className="text-4xl md:text-5xl font-bold text-yellow-300 mb-4">
             About Us
           </h1>
-          <p className="text-xl text-gray-300">
-            Learn more about KaeDy&apos;s Pizza Hub&apos;s pizzas, budget meals, chicken, and milk tea
-          </p>
         </div>
 
         <div className="bg-neutral-900 rounded-xl shadow-lg p-4 sm:p-6 md:p-8 mb-8 border border-yellow-500/30">

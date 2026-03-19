@@ -1,5 +1,18 @@
 import { useState } from 'react';
-import { Menu, X, ShoppingCart, User, LogOut } from 'lucide-react';
+import {
+  Menu,
+  X,
+  ShoppingCart,
+  User,
+  LogOut,
+  Home,
+  UtensilsCrossed,
+  Gamepad2,
+  Images,
+  Info,
+  Phone,
+  LogIn,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useCart } from '../contexts/CartContext';
 
@@ -15,12 +28,12 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
   const { cartCount } = useCart();
 
   const publicPages = [
-    { name: 'Home', id: 'home' },
-    { name: 'Menu', id: 'menu' },
-    { name: 'Game', id: 'game' },
-    { name: 'Gallery', id: 'gallery' },
-    { name: 'About', id: 'about' },
-    { name: 'Contact', id: 'contact' },
+    { name: 'Home', id: 'home', Icon: Home },
+    { name: 'Menu', id: 'menu', Icon: UtensilsCrossed },
+    { name: 'Game', id: 'game', Icon: Gamepad2 },
+    { name: 'Gallery', id: 'gallery', Icon: Images },
+    { name: 'About', id: 'about', Icon: Info },
+    { name: 'Contact', id: 'contact', Icon: Phone },
   ];
 
   const handleSignOutClick = () => {
@@ -30,7 +43,8 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
   const handleConfirmSignOut = async () => {
     try {
       await signOut();
-      window.location.reload();
+      onNavigate('home');
+      setIsOpen(false);
     } catch (error) {
       console.error('Error signing out:', error);
     } finally {
@@ -70,7 +84,10 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                     : 'hover:bg-yellow-500 hover:text-black'
                 }`}
               >
-                {page.name}
+                <span className="inline-flex items-center gap-2">
+                  <page.Icon className="w-4 h-4" />
+                  {page.name}
+                </span>
               </button>
             ))}
 
@@ -165,7 +182,10 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                       : 'text-yellow-300 hover:bg-yellow-500 hover:text-black'
                   }`}
                 >
-                  {page.name}
+                  <span className="flex items-center gap-3">
+                    <page.Icon className="w-5 h-5 shrink-0" />
+                    <span>{page.name}</span>
+                  </span>
                 </button>
               ))}
 
@@ -176,14 +196,20 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                     onClick={() => handleNavigation('profile')}
                     className="block w-full text-left px-3 py-2 rounded-lg text-base font-semibold text-yellow-300 hover:bg-yellow-500 hover:text-black transition-all"
                   >
-                    My Profile
+                    <span className="flex items-center gap-3">
+                      <User className="w-5 h-5 shrink-0" />
+                      <span>My Profile</span>
+                    </span>
                   </button>
 
                   <button
                     onClick={handleSignOutClick}
                     className="block w-full text-left px-3 py-2 rounded-lg text-base font-semibold text-yellow-300 hover:bg-yellow-500 hover:text-black transition-all"
                   >
-                    Sign Out
+                    <span className="flex items-center gap-3">
+                      <LogOut className="w-5 h-5 shrink-0" />
+                      <span>Sign Out</span>
+                    </span>
                   </button>
                 </>
               )}
@@ -199,7 +225,10 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                         : 'text-yellow-300 hover:bg-yellow-500 hover:text-black'
                     }`}
                   >
-                    Sign In / Sign Up
+                    <span className="flex items-center gap-3">
+                      <LogIn className="w-5 h-5 shrink-0" />
+                      <span>Sign In / Sign Up</span>
+                    </span>
                   </button>
                 </>
               )}

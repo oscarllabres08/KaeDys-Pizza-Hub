@@ -18,22 +18,29 @@ type Question = {
 };
 
 const GAME_SECONDS = 30;
+const SOUND_CACHE_BUST = import.meta.env.DEV ? String(Date.now()) : '1';
 
 function createChainedAudio(srcCandidates: string[]) {
   const audio = new Audio();
   audio.preload = 'auto';
   audio.volume = 0.9;
 
+  const withCacheBust = (src: string) => {
+    if (!src) return src;
+    const joiner = src.includes('?') ? '&' : '?';
+    return `${src}${joiner}v=${encodeURIComponent(SOUND_CACHE_BUST)}`;
+  };
+
   let idx = 0;
   const tryNext = () => {
     idx += 1;
     if (idx >= srcCandidates.length) return;
-    audio.src = srcCandidates[idx];
+    audio.src = withCacheBust(srcCandidates[idx] ?? '');
     audio.load();
   };
 
   audio.addEventListener('error', tryNext);
-  audio.src = srcCandidates[0] ?? '';
+  audio.src = withCacheBust(srcCandidates[0] ?? '');
   return audio;
 }
 
@@ -139,9 +146,9 @@ export default function GamePage({ onNavigate }: GamePageProps) {
     }
     if (!tickAudioRef.current) {
       tickAudioRef.current = createChainedAudio([
-        '/sounds/game_start.wav',
-        '/sounds/game_start.mp3',
-        '/sounds/game_start.ogg',
+        '/sounds/countdown.wav',
+        '/sounds/countdown.mp3',
+        '/sounds/countdown.ogg',
       ]);
       tickAudioRef.current.volume = 0.5;
     }
@@ -355,9 +362,6 @@ export default function GamePage({ onNavigate }: GamePageProps) {
               <h2 className="text-2xl font-black text-yellow-300 mb-2 tracking-tight">
                 Choose difficulty
               </h2>
-              <p className="text-sm text-gray-300 mb-7 leading-relaxed">
-                Easy: 1-digit × 1-digit (+1). Medium: 2-digit × 1-digit (+2).
-              </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <button

@@ -101,9 +101,6 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
           <h1 className="text-4xl md:text-5xl font-bold mb-4">
             Our Menu
           </h1>
-          <p className="text-xl text-gray-300 mb-4">
-            Enjoy our pizzas, budget meals, fried chicken, milk tea, and more
-          </p>
         </div>
 
         <div className="mb-4">
@@ -144,39 +141,41 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
               return (
                 <div
                   key={item.id}
-                  className="bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col aspect-[3/4]"
+                  className="bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col"
                 >
                   <button
                     type="button"
-                    className="relative h-24 overflow-hidden w-full"
+                    className="w-full px-3 pt-3"
                     onClick={() => setPreviewItem(item)}
                   >
-                    <img
-                      src={item.image_url}
-                      alt={item.name}
-                      className="w-full h-full object-cover transition-transform hover:scale-110"
-                    />
-                    <div className="absolute top-2 right-2 bg-yellow-400 text-black px-3 py-1 rounded-full font-bold">
-                      ₱{item.price}
-                    </div>
-                    {!available && (
-                      <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
-                        <span className="px-3 py-1 rounded-full text-[11px] font-semibold bg-gray-200 text-gray-800">
-                          Not available today
-                        </span>
+                    <div className="relative mx-auto aspect-square w-36 sm:w-40 md:w-44 overflow-hidden rounded-lg">
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-110"
+                      />
+                      <div className="absolute top-2 right-2 bg-yellow-400 text-black px-3 py-1 rounded-full font-bold">
+                        ₱{item.price}
                       </div>
-                    )}
+                      {!available && (
+                        <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
+                          <span className="px-3 py-1 rounded-full text-[11px] font-semibold bg-gray-200 text-gray-800">
+                            Not available today
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </button>
                   <div className="p-3 flex-1 flex flex-col">
-                    <h3 className="text-sm font-bold text-yellow-300 mb-1 line-clamp-2">
+                    <h3 className="text-sm font-bold text-yellow-300 mb-0.5 leading-snug line-clamp-2">
                       {item.name}
                     </h3>
-                    <p className="text-gray-300 text-xs mb-3 line-clamp-2">
+                    <p className="text-gray-300 text-xs mb-2 leading-snug line-clamp-2">
                       {item.description}
                     </p>
                     {available ? (
                       <>
-                        <div className="mb-3 flex items-center justify-between gap-0">
+                        <div className="mb-2 flex items-center justify-between gap-0">
                           <span className="text-xs text-gray-300">Quantity</span>
                           <div className="flex items-center gap-1.5 bg-black/40 rounded-full px-1 py-0.1 border border-yellow-500/40">
                             <button
@@ -208,11 +207,11 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
                             </button>
                           </div>
                         </div>
-                        <div className="mt-auto flex gap-2">
+                        <div className="flex gap-2">
                           <button
                             type="button"
                             onClick={() => handleAddToCart(item)}
-                            className={`flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold transition-all px-1.5 py-0 ${
+                            className={`flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold transition-all px-2 py-1.4  leading-tight text-center whitespace-normal line-clamp-2 ${
                               addedItems.has(item.id)
                                 ? 'bg-green-500 text-white'
                                 : 'bg-yellow-400 text-black hover:bg-yellow-300'
@@ -223,7 +222,7 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
                           <button
                             type="button"
                             onClick={() => handleBuyNow(item)}
-                            className="flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold border border-yellow-400 text-yellow-300 hover:bg-yellow-400/10 transition-all px-2 py-1.5"
+                            className="flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold border border-yellow-400 text-yellow-300 hover:bg-yellow-400/10 transition-all px-2 py-1.5 leading-tight text-center whitespace-normal line-clamp-2"
                           >
                             Buy Now
                           </button>
@@ -243,11 +242,11 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
         {previewItem && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
             <div className="bg-neutral-900 rounded-2xl max-w-md w-full overflow-hidden border border-yellow-500/40">
-              <div className="relative h-56">
+              <div className="relative w-full bg-black/60" style={{ paddingTop: '100%' }}>
                 <img
                   src={previewItem.image_url}
                   alt={previewItem.name}
-                  className="w-full h-full object-cover"
+                  className="absolute inset-0 w-full h-full object-contain"
                 />
                 <button
                   type="button"
