@@ -1383,6 +1383,39 @@ export default function AdminPage() {
                           </div>
                         </div>
 
+                        {order.payment_method === 'GCash' && (
+                          <div className="mt-3 rounded-xl border border-yellow-500/15 bg-black/25 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-gray-300 mb-1">GCash Payment Details</p>
+                                <p className="text-[11px] font-semibold text-gray-400">Reference Number</p>
+                                <p className="mt-1 text-sm font-semibold text-yellow-200 break-words">
+                                  {order.payment_reference || '—'}
+                                </p>
+                              </div>
+
+                              {order.payment_proof_url ? (
+                                <a
+                                  href={order.payment_proof_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0"
+                                  aria-label="View payment proof"
+                                  title="Click to view full payment proof"
+                                >
+                                  <img
+                                    src={order.payment_proof_url}
+                                    alt="Payment proof"
+                                    className="w-24 h-24 object-contain rounded-lg border border-white/10 bg-black/60 hover:opacity-90 transition-opacity"
+                                  />
+                                </a>
+                              ) : (
+                                <p className="text-[11px] text-gray-500 mt-1">No proof uploaded</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="mt-4 rounded-xl border border-yellow-500/15 bg-black/30 p-3">
                           <div className="flex items-center justify-between gap-3 mb-2">
                             <p className="text-xs font-semibold text-gray-300">Items</p>
