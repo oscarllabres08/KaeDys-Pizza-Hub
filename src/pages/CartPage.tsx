@@ -164,32 +164,11 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
         paymentProofUrl = urlData.publicUrl;
       }
 
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .insert([
-          {
-            user_id: user.id,
-            total_amount: checkoutSubtotal,
-            discount_amount: checkoutDiscountAmount,
-            final_amount: checkoutFinalTotal,
-            payment_method: paymentMethod,
-            payment_reference: paymentReference || null,
-            payment_proof_url: paymentProofUrl,
-            delivery_address: deliveryAddress.trim(),
-            contact_phone: deliveryPhone.trim(),
-            notes:
-              (notes ? `${notes.trim()}\n\n` : '') +
-              `Customer: ${deliveryName.trim()}\nEmail: ${deliveryEmail.trim()}`,
-            status: 'pending',
-          },
-        ])
-        .select()
-        .single();
+      const notesPayload =
+        (notes ? `${notes.trim()}\n\n` : '') +
+        `Customer: ${deliveryName.trim()}\nEmail: ${deliveryEmail.trim()}`;
 
-      if (orderError) throw orderError;
-
-      const orderItems = checkoutItems.map((item) => ({
-        order_id: orderData.id,
+      const pItems = checkoutItems.map((item) => ({
         menu_item_id: item.id,
         menu_item_name: item.name,
         quantity: item.quantity,
@@ -197,11 +176,23 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
         subtotal: item.price * item.quantity,
       }));
 
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(orderItems);
+      // One DB round-trip: prevents flaky mobile networks from inserting the order
+      // but failing on a second request (user sees error while order exists in admin).
+      const { data: orderId, error: placeError } = await supabase.rpc('place_customer_order', {
+        p_total_amount: checkoutSubtotal,
+        p_discount_amount: checkoutDiscountAmount,
+        p_final_amount: checkoutFinalTotal,
+        p_payment_method: paymentMethod,
+        p_payment_reference: paymentReference?.trim() || null,
+        p_payment_proof_url: paymentProofUrl,
+        p_delivery_address: deliveryAddress.trim(),
+        p_contact_phone: deliveryPhone.trim(),
+        p_notes: notesPayload,
+        p_items: pItems,
+      });
 
-      if (itemsError) throw itemsError;
+      if (placeError) throw placeError;
+      if (!orderId) throw new Error('place_customer_order returned no order id');
 
       if (isBuyNowCheckout) {
         clearBuyNow();
