@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Minus, Plus, Trash2, ShoppingBag } from 'lucide-react';
 import { useCart } from '../contexts/CartContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,13 +21,17 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
     finalTotal,
     clearCart,
   } = useCart();
-  const { buyNowItems, buyNowTotal, clearBuyNow } = useBuyNow();
+  const { buyNowItems, buyNowTotal, updateBuyNowQuantity, clearBuyNow } = useBuyNow();
   const { user, customerProfile } = useAuth();
-  const [showCheckout, setShowCheckout] = useState(startInCheckout);
+  // Cart: "Proceed to Checkout" opens delivery form. Buy Now (#checkout): review → Proceed → delivery form.
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [buyNowCheckoutStep, setBuyNowCheckoutStep] = useState<'review' | 'details'>('review');
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'COD' | 'GCash'>('COD');
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentProof, setPaymentProof] = useState<File | null>(null);
+  /** Official GCash QR from `site_settings` + Storage; falls back to `/QR.png` */
+  const [gcashQrSrc, setGcashQrSrc] = useState<string>('/QR.png');
   const [notes, setNotes] = useState('');
   const [deliveryName, setDeliveryName] = useState('');
   const [deliveryPhone, setDeliveryPhone] = useState('');
@@ -99,24 +103,86 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
     </div>
   ) : null;
 
+  /** Buy Now session (separate from cart — does not remove cart items) */
+  const isBuyNowFlow = !!buyNowItems && buyNowItems.length > 0;
+  const isBuyNowRoute = startInCheckout && isBuyNowFlow;
+  const showBuyNowDeliveryForm = isBuyNowRoute && buyNowCheckoutStep === 'details';
+  const isCartCheckoutForm = !startInCheckout && showCheckout;
+
+  const deliveryFormVisible = showBuyNowDeliveryForm || isCartCheckoutForm;
+
+  const loadGcashQr = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('site_settings')
+        .select('gcash_qr_storage_path, updated_at')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (error) throw error;
+      const path = data?.gcash_qr_storage_path;
+      if (!path) {
+        setGcashQrSrc('/QR.png');
+        return;
+      }
+      const { data: pub } = supabase.storage.from('gcash-qr').getPublicUrl(path);
+      const v = data?.updated_at ? `?v=${encodeURIComponent(data.updated_at)}` : '';
+      setGcashQrSrc(`${pub.publicUrl}${v}`);
+    } catch (e) {
+      console.warn('Could not load GCash QR from site_settings; using fallback.', e);
+      setGcashQrSrc('/QR.png');
+    }
+  }, []);
+
   useEffect(() => {
-    if (!showCheckout) return;
+    void loadGcashQr();
+  }, [loadGcashQr]);
+
+  useEffect(() => {
+    if (paymentMethod !== 'GCash') return;
+    const channel = supabase
+      .channel('cart-gcash-qr')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'site_settings', filter: 'id=eq.1' },
+        () => {
+          void loadGcashQr();
+        }
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [paymentMethod, loadGcashQr]);
+
+  useEffect(() => {
+    if (startInCheckout) setBuyNowCheckoutStep('review');
+  }, [startInCheckout]);
+
+  useEffect(() => {
+    if (!deliveryFormVisible) return;
     setDeliveryName(customerProfile?.full_name || '');
     setDeliveryPhone(customerProfile?.phone || '');
     setDeliveryEmail(user?.email || '');
-  }, [showCheckout, customerProfile, user?.email]);
+  }, [deliveryFormVisible, customerProfile, user?.email]);
 
-  const isBuyNowCheckout = !!buyNowItems && buyNowItems.length > 0;
-  const checkoutItems = isBuyNowCheckout ? buyNowItems : cart;
-  const checkoutSubtotal = isBuyNowCheckout ? buyNowTotal : cartTotal;
-  const checkoutDiscountPercent = isBuyNowCheckout ? 0 : discountPercent;
-  const checkoutDiscountAmount = isBuyNowCheckout ? 0 : discountAmount;
-  const checkoutFinalTotal = isBuyNowCheckout ? buyNowTotal : finalTotal;
+  /** Line items for place order — cart checkout uses cart only; Buy Now delivery uses buyNow only */
+  const checkoutLineItems = showBuyNowDeliveryForm
+    ? buyNowItems!
+    : isCartCheckoutForm
+      ? cart
+      : [];
+  const checkoutSubtotal = showBuyNowDeliveryForm ? buyNowTotal : isCartCheckoutForm ? cartTotal : 0;
+  const checkoutDiscountPercent = showBuyNowDeliveryForm ? 0 : discountPercent;
+  const checkoutDiscountAmount = showBuyNowDeliveryForm ? 0 : discountAmount;
+  const checkoutFinalTotal = showBuyNowDeliveryForm ? buyNowTotal : isCartCheckoutForm ? finalTotal : 0;
+
+  const showCheckoutForm = showBuyNowDeliveryForm || isCartCheckoutForm;
 
   const handleCheckout = async () => {
     if (!user || !customerProfile) return;
 
-    if (!checkoutItems || checkoutItems.length === 0) {
+    if (!checkoutLineItems || checkoutLineItems.length === 0) {
       openModal({
         title: 'No items to checkout',
         message: 'Please add items before placing an order.',
@@ -168,7 +234,7 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
         (notes ? `${notes.trim()}\n\n` : '') +
         `Customer: ${deliveryName.trim()}\nEmail: ${deliveryEmail.trim()}`;
 
-      const pItems = checkoutItems.map((item) => ({
+      const pItems = checkoutLineItems.map((item) => ({
         menu_item_id: item.id,
         menu_item_name: item.name,
         quantity: item.quantity,
@@ -194,7 +260,7 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
       if (placeError) throw placeError;
       if (!orderId) throw new Error('place_customer_order returned no order id');
 
-      if (isBuyNowCheckout) {
+      if (showBuyNowDeliveryForm) {
         clearBuyNow();
       } else {
         clearCart();
@@ -239,32 +305,42 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
     );
   }
 
-  if (checkoutItems.length === 0) {
-    if (isBuyNowCheckout) {
-      return (
-        <>
-          {modalEl}
-          <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-16 px-4 flex items-center justify-center">
-            <div className="text-center max-w-md">
-              <ShoppingBag className="w-24 h-24 text-yellow-400 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-yellow-300 mb-2">Buy Now checkout is empty</h2>
-              <p className="text-sm text-gray-400 mb-6">
-                Please go back to the menu and tap Buy Now again.
-              </p>
+  // #checkout URL is only for Buy Now (direct checkout). Normal cart uses #cart → Proceed to Checkout.
+  if (startInCheckout && !isBuyNowFlow) {
+    return (
+      <>
+        {modalEl}
+        <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-16 px-4 flex items-center justify-center">
+          <div className="text-center max-w-md space-y-4">
+            <ShoppingBag className="w-24 h-24 text-yellow-400 mx-auto mb-2" />
+            <h2 className="text-2xl font-bold text-yellow-300">Buy Now checkout</h2>
+            <p className="text-sm text-gray-400">
+              This page is for orders started with <span className="text-yellow-200 font-semibold">Buy Now</span> from
+              the menu. Your saved cart is separate and unchanged.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
               <button
-                onClick={() => {
-                  clearBuyNow();
-                  onNavigate('menu');
-                }}
+                type="button"
+                onClick={() => onNavigate('menu')}
                 className="bg-yellow-400 text-black px-8 py-3 rounded-lg font-semibold hover:bg-yellow-300 transition-all"
               >
-                Back to Menu
+                Go to Menu
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('cart')}
+                className="bg-neutral-800 text-gray-200 px-8 py-3 rounded-lg font-semibold hover:bg-neutral-700 transition-all border border-yellow-500/25"
+              >
+                Open Cart
               </button>
             </div>
           </div>
-        </>
-      );
-    }
+        </div>
+      </>
+    );
+  }
+
+  if (!startInCheckout && cart.length === 0 && !isBuyNowFlow) {
     return (
       <>
         {modalEl}
@@ -284,14 +360,148 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
     );
   }
 
-  if (showCheckout) {
+  if (!startInCheckout && cart.length === 0 && isBuyNowFlow) {
+    return (
+      <>
+        {modalEl}
+        <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-16 px-4 flex items-center justify-center">
+          <div className="text-center max-w-md space-y-4">
+            <ShoppingBag className="w-24 h-24 text-yellow-400 mx-auto mb-2" />
+            <h2 className="text-2xl font-bold text-yellow-300">Your cart is empty</h2>
+            <p className="text-sm text-gray-400">
+              You still have a <span className="text-yellow-200 font-semibold">Buy Now</span> order in progress (separate
+              from this cart).
+            </p>
+            <button
+              type="button"
+              onClick={() => onNavigate('checkout')}
+              className="w-full bg-yellow-400 text-black px-8 py-3 rounded-lg font-semibold hover:bg-yellow-300 transition-all"
+            >
+              Continue Buy Now checkout
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('menu')}
+              className="w-full bg-neutral-800 text-gray-200 px-8 py-3 rounded-lg font-semibold hover:bg-neutral-700 transition-all border border-yellow-500/25"
+            >
+              Back to Menu
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  /* Buy Now: review item(s) + quantity, then Proceed to Checkout (delivery form) */
+  if (isBuyNowRoute && buyNowCheckoutStep === 'review' && buyNowItems && buyNowItems.length > 0) {
+    return (
+      <>
+        {modalEl}
+        <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-8 px-4">
+          <div className="max-w-4xl mx-auto">
+            <div className="mb-6">
+              <h1 className="text-3xl font-bold text-yellow-300">Buy Now — Review</h1>
+              <p className="text-sm text-gray-400 mt-1">
+                Adjust quantity, then continue. Your saved cart is unchanged.
+              </p>
+            </div>
+
+            <div className="bg-neutral-900/80 rounded-2xl shadow-xl p-4 sm:p-6 mb-6 border border-yellow-500/25">
+              {buyNowItems.map((item) => (
+                <div key={item.id} className="py-4 border-b border-yellow-500/15 last:border-b-0">
+                  <div className="flex gap-4">
+                    <img
+                      src={item.image_url}
+                      alt={item.name}
+                      className="w-20 h-20 object-cover rounded-xl shrink-0 border border-yellow-500/15"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-yellow-300 break-words leading-snug">{item.name}</h3>
+                      <p className="text-xs text-gray-400 mt-1">₱{item.price.toFixed(2)} each</p>
+
+                      <div className="mt-3 inline-flex items-center gap-2 bg-black/40 border border-yellow-500/25 rounded-full px-2 py-1">
+                        <button
+                          type="button"
+                          onClick={() => updateBuyNowQuantity(item.id, item.quantity - 1)}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-full bg-neutral-900 hover:bg-neutral-800 transition-all"
+                          aria-label="Decrease quantity"
+                        >
+                          <Minus className="w-4 h-4 text-gray-200" />
+                        </button>
+                        <span className="font-semibold w-8 text-center text-gray-100">{item.quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() => updateBuyNowQuantity(item.id, item.quantity + 1)}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-full bg-neutral-900 hover:bg-neutral-800 transition-all"
+                          aria-label="Increase quantity"
+                        >
+                          <Plus className="w-4 h-4 text-gray-200" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Item total</span>
+                    <span className="font-bold text-yellow-300">
+                      ₱{(item.price * item.quantity).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-neutral-900/80 rounded-xl border border-yellow-500/25 p-3 sm:p-4 shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-base font-bold text-yellow-300">Order Summary</h2>
+                <span className="text-[11px] text-gray-400">{buyNowItems.length} item(s)</span>
+              </div>
+              <div className="flex justify-between text-base font-bold text-yellow-300 pt-2 border-t border-yellow-500/20">
+                <span>Total</span>
+                <span className="text-white">₱{buyNowTotal.toFixed(2)}</span>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearBuyNow();
+                    onNavigate('menu');
+                  }}
+                  className="flex-1 inline-flex min-h-[42px] items-center justify-center rounded-lg bg-neutral-800 px-3 py-3 text-sm font-semibold text-gray-200 transition-colors hover:bg-neutral-700 sm:px-4"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBuyNowCheckoutStep('details')}
+                  className="flex-1 inline-flex min-h-[42px] items-center justify-center rounded-lg bg-yellow-400 px-3 py-3 text-center text-sm font-semibold leading-normal text-black shadow-md transition-colors hover:bg-yellow-300 sm:px-4"
+                >
+                  Proceed to Checkout
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (showCheckoutForm && checkoutLineItems.length > 0) {
     return (
       <>
         {modalEl}
         <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 py-8 px-4">
           <div className="max-w-2xl mx-auto">
             <div className="bg-neutral-900 rounded-xl shadow-lg p-6 border border-yellow-500/30">
-              <h2 className="text-2xl font-bold text-yellow-300 mb-6">Checkout</h2>
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-yellow-300">
+                  {showBuyNowDeliveryForm ? 'Buy Now — Checkout' : 'Checkout'}
+                </h2>
+                {showBuyNowDeliveryForm && (
+                  <p className="text-xs text-gray-400 mt-2">
+                    This order is separate from your cart. Items in your cart stay saved.
+                  </p>
+                )}
+              </div>
 
             <div className="mb-6">
               <h3 className="font-semibold text-yellow-300 mb-2">Delivery Information</h3>
@@ -426,7 +636,7 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
                   </p>
                   <div className="bg-black/60 p-4 rounded-xl inline-block border border-white/10">
                     <img
-                      src="/QR.png"
+                      src={gcashQrSrc}
                       alt="GCash QR Code"
                       className="w-48 h-48 object-contain rounded-lg"
                     />
@@ -478,7 +688,7 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
             <div className="mb-6 p-4 bg-black/40 rounded-lg">
               <p className="text-sm font-semibold text-gray-200 mb-3">Order Summary</p>
               <div className="space-y-2 mb-4">
-                {checkoutItems.map((item) => (
+                {checkoutLineItems.map((item) => (
                   <div key={item.id} className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm text-gray-100 break-words">
@@ -511,16 +721,15 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
             <div className="flex gap-4">
               <button
                 onClick={() => {
-                  if (isBuyNowCheckout) {
-                    clearBuyNow();
-                    onNavigate('menu');
+                  if (showBuyNowDeliveryForm) {
+                    setBuyNowCheckoutStep('review');
                     return;
                   }
                   setShowCheckout(false);
                 }}
                 className="flex-1 bg-neutral-800 text-gray-200 py-3 rounded-lg font-semibold hover:bg-neutral-700 transition-all"
               >
-                {isBuyNowCheckout ? 'Back to Menu' : 'Back to Cart'}
+                {showBuyNowDeliveryForm ? 'Back' : 'Back to Cart'}
               </button>
               <button
                 onClick={handleCheckout}
@@ -546,6 +755,30 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
             <h1 className="text-3xl font-bold text-yellow-300">Your Cart</h1>
             <p className="text-sm text-gray-400 mt-1">Review your items before checkout.</p>
           </div>
+
+          {isBuyNowFlow && (
+            <div className="mb-4 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-gray-200">
+              <span className="font-semibold text-yellow-200">Buy Now</span> is separate: you have a quick checkout in
+              progress.{' '}
+              <button
+                type="button"
+                onClick={() => onNavigate('checkout')}
+                className="text-yellow-300 font-semibold underline underline-offset-2 hover:text-yellow-200"
+              >
+                Continue Buy Now checkout
+              </button>
+              {' · '}
+              <button
+                type="button"
+                onClick={() => {
+                  clearBuyNow();
+                }}
+                className="text-gray-400 hover:text-gray-300 text-xs"
+              >
+                Cancel Buy Now
+              </button>
+            </div>
+          )}
 
         <div className="bg-neutral-900/80 rounded-2xl shadow-xl p-4 sm:p-6 mb-6 border border-yellow-500/25">
           {cart.map((item) => (

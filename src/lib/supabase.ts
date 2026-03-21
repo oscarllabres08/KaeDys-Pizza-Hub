@@ -107,3 +107,10 @@ export type GameSettings = {
   falling_pizza_active?: boolean | null;
   updated_at: string;
 };
+
+/** Singleton row `id = 1` — official GCash QR object path in Storage bucket `gcash-qr` */
+export type SiteSettings = {
+  id: number;
+  gcash_qr_storage_path: string | null;
+  updated_at: string;
+};

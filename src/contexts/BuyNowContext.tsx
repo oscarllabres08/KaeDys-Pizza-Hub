@@ -6,6 +6,7 @@ export type BuyNowItem = MenuItem & { quantity: number };
 type BuyNowContextType = {
   buyNowItems: BuyNowItem[] | null;
   startBuyNow: (item: MenuItem, quantity: number) => void;
+  updateBuyNowQuantity: (menuItemId: string, quantity: number) => void;
   clearBuyNow: () => void;
   buyNowTotal: number;
 };
@@ -22,13 +23,24 @@ export function BuyNowProvider({ children }: { children: ReactNode }) {
 
   const clearBuyNow = () => setBuyNowItems(null);
 
+  const updateBuyNowQuantity = (menuItemId: string, quantity: number) => {
+    setBuyNowItems((prev) => {
+      if (!prev?.length) return prev;
+      const q = Number.isFinite(quantity) ? Math.min(99, Math.max(0, Math.floor(quantity))) : 1;
+      if (q <= 0) return null;
+      return prev.map((it) => (it.id === menuItemId ? { ...it, quantity: q } : it));
+    });
+  };
+
   const buyNowTotal = useMemo(() => {
     if (!buyNowItems) return 0;
     return buyNowItems.reduce((sum, i) => sum + i.price * i.quantity, 0);
   }, [buyNowItems]);
 
   return (
-    <BuyNowContext.Provider value={{ buyNowItems, startBuyNow, clearBuyNow, buyNowTotal }}>
+    <BuyNowContext.Provider
+      value={{ buyNowItems, startBuyNow, updateBuyNowQuantity, clearBuyNow, buyNowTotal }}
+    >
       {children}
     </BuyNowContext.Provider>
   );

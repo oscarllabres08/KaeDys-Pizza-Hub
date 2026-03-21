@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { supabase, AdminProfile, Announcement, CustomerProfile, GalleryImage, GameSettings, MenuItem, Order, OrderItem } from '../lib/supabase';
+import {
+  supabase,
+  AdminProfile,
+  Announcement,
+  CustomerProfile,
+  GalleryImage,
+  GameSettings,
+  MenuItem,
+  Order,
+  OrderItem,
+  SiteSettings,
+} from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Pizza,
   ImageIcon,
   Megaphone,
   Gamepad2,
+  QrCode,
   ClipboardList,
   Loader2,
   Menu as MenuIcon,
@@ -19,7 +31,7 @@ type OrderWithItems = Order & {
   order_items: OrderItem[];
 };
 
-type TabId = 'orders' | 'menu' | 'announcements' | 'gallery' | 'game' | 'admins';
+type TabId = 'orders' | 'menu' | 'announcements' | 'gallery' | 'gcash' | 'game' | 'admins';
 
 const STATUS_LABELS: { id: Order['status']; label: string }[] = [
   { id: 'pending', label: 'Pending' },
@@ -38,6 +50,7 @@ function isTabId(value: string): value is TabId {
     value === 'menu' ||
     value === 'announcements' ||
     value === 'gallery' ||
+    value === 'gcash' ||
     value === 'game' ||
     value === 'admins'
   );
@@ -210,6 +223,12 @@ export default function AdminPage() {
   const [gameSettings, setGameSettings] = useState<GameSettings | null>(null);
   const [gameLoading, setGameLoading] = useState(false);
 
+  const [gcashSettings, setGcashSettings] = useState<Pick<SiteSettings, 'gcash_qr_storage_path' | 'updated_at'> | null>(
+    null
+  );
+  const [gcashLoading, setGcashLoading] = useState(false);
+  const [gcashUploading, setGcashUploading] = useState(false);
+
   const [admins, setAdmins] = useState<AdminProfile[]>([]);
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [customersById, setCustomersById] = useState<Record<string, CustomerProfile>>({});
@@ -285,6 +304,14 @@ export default function AdminPage() {
       return matchesCategory && matchesQuery;
     });
   }, [menuCategory, menuItems, menuSearch]);
+
+  const gcashPreviewUrl = useMemo(() => {
+    if (!gcashSettings?.gcash_qr_storage_path) return null;
+    const { data } = supabase.storage
+      .from('gcash-qr')
+      .getPublicUrl(gcashSettings.gcash_qr_storage_path);
+    return `${data.publicUrl}?v=${encodeURIComponent(gcashSettings.updated_at)}`;
+  }, [gcashSettings]);
 
   useEffect(() => {
     if (menuCategory !== 'All' && !filterCategoryOptions.includes(menuCategory)) {
@@ -519,6 +546,85 @@ export default function AdminPage() {
     }
   };
 
+  const fetchGcashSettings = useCallback(async () => {
+    setGcashLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('site_settings')
+        .select('gcash_qr_storage_path, updated_at')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (error) throw error;
+      setGcashSettings({
+        gcash_qr_storage_path: data?.gcash_qr_storage_path ?? null,
+        updated_at: data?.updated_at ?? new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error loading GCash QR settings', error);
+      setGcashSettings(null);
+    } finally {
+      setGcashLoading(false);
+    }
+  }, []);
+
+  const handleGcashQrUpload = async (file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please choose an image file (PNG, JPG, etc.).');
+      return;
+    }
+    setGcashUploading(true);
+    try {
+      const { data: currentRow, error: readErr } = await supabase
+        .from('site_settings')
+        .select('gcash_qr_storage_path')
+        .eq('id', 1)
+        .maybeSingle();
+      if (readErr) throw readErr;
+      const prevPath = currentRow?.gcash_qr_storage_path ?? null;
+
+      const fileExt = file.name.split('.').pop() || 'png';
+      const objectPath = `gcash-${Date.now()}.${fileExt}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('gcash-qr')
+        .upload(objectPath, file, { cacheControl: '3600', upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const newPath = uploadData.path;
+      const { error: dbError } = await supabase
+        .from('site_settings')
+        .update({ gcash_qr_storage_path: newPath, updated_at: new Date().toISOString() })
+        .eq('id', 1);
+
+      if (dbError) {
+        await supabase.storage.from('gcash-qr').remove([newPath]);
+        throw dbError;
+      }
+
+      if (prevPath && prevPath !== newPath) {
+        const { error: rmError } = await supabase.storage.from('gcash-qr').remove([prevPath]);
+        if (rmError) console.warn('Could not delete previous GCash QR from storage', rmError);
+      }
+
+      await fetchGcashSettings();
+      alert('GCash QR code updated. Customers will see the new image.');
+    } catch (error) {
+      console.error('Error uploading GCash QR', error);
+      alert(
+        'Failed to update GCash QR. Only approved admins can upload, and the database migration for site_settings + storage must be applied.'
+      );
+    } finally {
+      setGcashUploading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'gcash') return;
+    void fetchGcashSettings();
+  }, [activeTab, fetchGcashSettings]);
+
   const fetchGameSettings = async () => {
     setGameLoading(true);
     try {
@@ -652,6 +758,17 @@ export default function AdminPage() {
       >
         <ImageIcon className="w-4 h-4" />
         Gallery
+      </button>
+      <button
+        onClick={() => handleSelectTab('gcash')}
+        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+          activeTab === 'gcash'
+            ? 'bg-yellow-400 text-black shadow-lg'
+            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
+        }`}
+      >
+        <QrCode className="w-4 h-4" />
+        GCash QR
       </button>
       <button
         onClick={() => handleSelectTab('game')}
@@ -900,6 +1017,20 @@ export default function AdminPage() {
                   <span className="flex items-center gap-2">
                     <ImageIcon className="w-4 h-4" />
                     Gallery
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => handleSelectTab('gcash')}
+                  className={`w-full inline-flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-semibold ${
+                    activeTab === 'gcash'
+                      ? 'bg-yellow-400 text-black'
+                      : 'bg-neutral-800 text-gray-100'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <QrCode className="w-4 h-4" />
+                    GCash QR
                   </span>
                 </button>
 
@@ -1630,6 +1761,72 @@ export default function AdminPage() {
                     />
                   </div>
                 ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeTab === 'gcash' && (
+          <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
+            <div className="flex items-center gap-2 mb-4">
+              <QrCode className="w-5 h-5 text-yellow-400" />
+              <h2 className="text-xl font-bold text-yellow-300">GCash payment QR</h2>
+            </div>
+            <p className="text-sm text-gray-300 mb-2">
+              Ito ang QR na makikita ng customers kapag pipiliin nila ang <strong className="text-yellow-200">GCash</strong>{' '}
+              sa checkout. Pag magpalit ka ng larawan, awtomatik tatanggalin ang lumang file sa storage.
+            </p>
+            <p className="text-xs text-gray-500 mb-6">
+              Seguridad: tanging <strong className="text-gray-400">active admin</strong> lang ang puwedeng mag-upload o
+              mag-delete sa bucket na ito (RLS + Storage policies). Hindi maaaring baguhin ng customer ang opisyal na QR
+              sa database.
+            </p>
+
+            {gcashLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
+              </div>
+            ) : (
+              <div className="flex flex-col md:flex-row gap-6 md:items-start">
+                <div className="flex-1 space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-200 mb-2">
+                      Upload o palitan ang QR (PNG / JPG / WebP)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                      disabled={gcashUploading}
+                      onChange={(e) => handleGcashQrUpload(e.target.files?.[0] || null)}
+                      className="w-full text-sm text-gray-200"
+                    />
+                    {gcashUploading && (
+                      <p className="text-xs text-yellow-200/90 mt-2 flex items-center gap-2">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Ina-upload…
+                      </p>
+                    )}
+                  </div>
+                  {gcashSettings?.updated_at && (
+                    <p className="text-xs text-gray-500">
+                      Huling update: {new Date(gcashSettings.updated_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                <div className="shrink-0 rounded-xl border border-yellow-500/25 bg-black/40 p-4 text-center">
+                  <p className="text-xs font-semibold text-gray-400 mb-2">Preview (tulad sa customer)</p>
+                  {gcashPreviewUrl ? (
+                    <img
+                      src={gcashPreviewUrl}
+                      alt="GCash QR preview"
+                      className="w-48 h-48 object-contain rounded-lg mx-auto border border-white/10 bg-black/60"
+                    />
+                  ) : (
+                    <div className="w-48 h-48 mx-auto rounded-lg border border-dashed border-gray-600 flex items-center justify-center text-gray-500 text-sm px-2">
+                      Wala pang naka-set na QR. Mag-upload para lumitaw sa checkout.
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </section>
