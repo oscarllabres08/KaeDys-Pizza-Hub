@@ -50,6 +50,16 @@ const STATUS_LABELS: { id: Order['status']; label: string }[] = [
 
 const ADMIN_TAB_STORAGE_KEY = 'kaedys_admin_active_tab';
 const WALLET_METHODS: PaymentMethodSetting['method'][] = ['GCash', 'Maya', 'PayPal'];
+const MAIN_CATEGORY_OPTIONS = ['Pizza', 'All Day Silog Meals', 'Chicken', 'Nasi Goreng', 'Drinks'];
+
+function toTitleCase(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : ''))
+    .join(' ');
+}
 
 function isTabId(value: string): value is TabId {
   return (
@@ -278,8 +288,9 @@ export default function AdminPage() {
   const [menuSearch, setMenuSearch] = useState('');
   const [menuCategory, setMenuCategory] = useState<string>('All');
   const [menuForm, setMenuForm] = useState({
-    category: 'Budget Meals',
+    category: 'Pizza',
     custom_category: '',
+    subcategory: '',
     name: '',
     description: '',
     price: '',
@@ -367,8 +378,13 @@ export default function AdminPage() {
     }
   }, [activeTab, isMasterAdmin]);
 
+  const formMainCategoryOptions = useMemo(
+    () => [...MAIN_CATEGORY_OPTIONS, 'Others'],
+    []
+  );
+
   const categoryOptions = useMemo(() => {
-    const preferred = ['Budget Meals', 'Pizza', 'Silog Meals', 'Drinks'];
+    const preferred = MAIN_CATEGORY_OPTIONS;
     const set = new Set<string>();
 
     for (const item of menuItems) {
@@ -377,12 +393,9 @@ export default function AdminPage() {
       if (label) set.add(label);
     }
 
-    // Keep Others available for the add/edit form
-    set.add('Others');
-
     const dynamic = [...set].filter((c) => !preferred.includes(c) && c !== 'Others').sort();
     const orderedPreferred = preferred.filter((c) => set.has(c));
-    return [...orderedPreferred, ...dynamic, 'Others'];
+    return [...orderedPreferred, ...dynamic];
   }, [menuItems]);
 
   const filterCategoryOptions = useMemo(
@@ -776,6 +789,27 @@ export default function AdminPage() {
       await fetchAnnouncements();
     } catch (error) {
       console.error('Error updating announcement', error);
+      openNoticeModal('Update failed', 'Failed to update promo visibility.', 'error');
+    }
+  };
+
+  const deleteAnnouncement = async (announcement: Announcement) => {
+    const ok = await askConfirm(
+      'Delete promo',
+      `Delete "${announcement.title}"? This action cannot be undone.`,
+      'Delete',
+      'Cancel'
+    );
+    if (!ok) return;
+
+    try {
+      const { error } = await supabase.from('announcements').delete().eq('id', announcement.id);
+      if (error) throw error;
+      await fetchAnnouncements();
+      openNoticeModal('Promo deleted', `"${announcement.title}" was removed.`, 'success');
+    } catch (error) {
+      console.error('Error deleting announcement', error);
+      openNoticeModal('Delete failed', 'Failed to delete promo.', 'error');
     }
   };
 
@@ -1241,6 +1275,8 @@ export default function AdminPage() {
   const handleSaveMenuItem = async () => {
     try {
       const price = Number(menuForm.price);
+      const normalizedCustomCategory = toTitleCase(menuForm.custom_category);
+      const normalizedSubcategory = toTitleCase(menuForm.subcategory);
       if (!menuForm.name || !menuForm.description || !Number.isFinite(price)) {
         openNoticeModal('Missing fields', 'Please fill out name, description, and a valid price.', 'info');
         return;
@@ -1249,7 +1285,7 @@ export default function AdminPage() {
         openNoticeModal('Description too long', 'Description must be 100 characters or less.', 'info');
         return;
       }
-      if (menuForm.category === 'Others' && !menuForm.custom_category.trim()) {
+      if (menuForm.category === 'Others' && !normalizedCustomCategory) {
         openNoticeModal('Missing category', 'Please enter a custom category.', 'info');
         return;
       }
@@ -1278,7 +1314,8 @@ export default function AdminPage() {
         description: menuForm.description.trim(),
         price,
         category: menuForm.category,
-        custom_category: menuForm.category === 'Others' ? menuForm.custom_category.trim() : null,
+        custom_category: menuForm.category === 'Others' ? normalizedCustomCategory : null,
+        subcategory: normalizedSubcategory || null,
         image_url: imageUrl,
       };
 
@@ -1689,13 +1726,13 @@ export default function AdminPage() {
               </div>
               <div className="p-4 space-y-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-200 mb-1">Category</label>
+                  <label className="block text-sm font-medium text-gray-200 mb-1">Main category</label>
                   <select
                     value={menuForm.category}
                     onChange={(e) => setMenuForm((p) => ({ ...p, category: e.target.value }))}
                     className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
                   >
-                    {categoryOptions.map((c) => (
+                    {formMainCategoryOptions.map((c) => (
                       <option key={c} value={c}>
                         {c}
                       </option>
@@ -1704,15 +1741,26 @@ export default function AdminPage() {
                 </div>
                 {menuForm.category === 'Others' && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-200 mb-1">Custom category</label>
+                    <label className="block text-sm font-medium text-gray-200 mb-1">Custom main category</label>
                     <input
                       value={menuForm.custom_category}
                       onChange={(e) => setMenuForm((p) => ({ ...p, custom_category: e.target.value }))}
                       className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
-                      placeholder="Enter category name"
+                      placeholder="Enter main category name"
                     />
                   </div>
                 )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-1">
+                    Subcategory (optional)
+                  </label>
+                  <input
+                    value={menuForm.subcategory}
+                    onChange={(e) => setMenuForm((p) => ({ ...p, subcategory: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
+                    placeholder="e.g. Milktea, Fruit Soda"
+                  />
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-200 mb-1">Product name</label>
                   <input
@@ -2175,8 +2223,9 @@ export default function AdminPage() {
                 onClick={() => {
                   setEditingMenuItem(null);
                   setMenuForm({
-                    category: 'Budget Meals',
+                    category: 'Pizza',
                     custom_category: '',
+                    subcategory: '',
                     name: '',
                     description: '',
                     price: '',
@@ -2281,6 +2330,11 @@ export default function AdminPage() {
                                 ? item.custom_category || 'Others'
                                 : item.category}
                             </p>
+                            {!!item.subcategory && (
+                              <p className="text-[11px] text-yellow-200/80 truncate">
+                                {item.subcategory}
+                              </p>
+                            )}
                           </div>
                         </div>
 
@@ -2319,6 +2373,7 @@ export default function AdminPage() {
                           setMenuForm({
                             category: resolvedCategory,
                             custom_category: resolvedCategory === 'Others' ? item.custom_category || '' : '',
+                            subcategory: item.subcategory || '',
                             name: item.name,
                             description: item.description,
                             price: String(item.price),
@@ -2405,20 +2460,39 @@ export default function AdminPage() {
                         <div>
                           <p className="font-semibold text-yellow-300">{a.title}</p>
                           <p className="text-sm text-gray-200">{a.content}</p>
+                          <div
+                            className={`mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                              a.active
+                                ? 'bg-green-500/20 text-green-300 border border-green-500/30'
+                                : 'bg-neutral-800 text-gray-300 border border-gray-700'
+                            }`}
+                          >
+                            {a.active ? 'Active now' : 'Inactive'}
+                          </div>
                           <p className="text-xs text-gray-500 mt-1">
                             {new Date(a.created_at).toLocaleString()}
                           </p>
                         </div>
-                        <button
-                          onClick={() => toggleAnnouncementActive(a)}
-                          className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
-                            a.active
-                              ? 'bg-green-500/20 text-green-300'
-                              : 'bg-neutral-800 text-gray-300'
-                          }`}
-                        >
-                          {a.active ? 'Active' : 'Hidden'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleAnnouncementActive(a)}
+                            className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
+                              a.active
+                                ? 'bg-green-500/20 text-green-300 border border-green-500/30'
+                                : 'bg-neutral-800 text-gray-300 border border-gray-700'
+                            }`}
+                          >
+                            {a.active ? 'Deactivate' : 'Activate'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteAnnouncement(a)}
+                            className="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-red-500/15 text-red-200 border border-red-500/30 hover:bg-red-500/25 transition-all"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>

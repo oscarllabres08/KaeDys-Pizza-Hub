@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pizza, Clock, Heart } from 'lucide-react';
+import { Pizza, Clock, Heart, Megaphone } from 'lucide-react';
 import { supabase, Announcement } from '../lib/supabase';
 
 type HomePageProps = {
@@ -24,6 +24,12 @@ export default function HomePage({ onNavigate }: HomePageProps) {
     if (data) setAnnouncements(data);
   };
 
+  const activeAnnouncements = announcements.filter((announcement) => announcement.active);
+  const latestPromo = activeAnnouncements[0];
+  const promoText = latestPromo
+    ? `PROMO: ${latestPromo.title} - ${latestPromo.content}`
+    : 'PROMO: No active promo right now.';
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900">
       <div className="relative h-[90vh] flex items-end justify-center bg-black pb-10">
@@ -33,6 +39,16 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           className="absolute inset-0 w-full h-full object-cover opacity-100  "
         />
         <div className="absolute inset-0 bg-black bg-opacity-60"></div>
+        <div className="absolute top-4 left-0 right-0 z-10 px-3 md:px-6">
+          <div className="mx-auto max-w-6xl overflow-hidden rounded-md border border-yellow-400/40 bg-black/75 backdrop-blur-sm">
+            <div className="marquee-track text-yellow-300 text-xs md:text-sm font-semibold py-2 whitespace-nowrap">
+              <span className="pl-6 pr-24 md:pr-40">{promoText}</span>
+              <span className="pl-6 pr-24 md:pr-40" aria-hidden="true">
+                {promoText}
+              </span>
+            </div>
+          </div>
+        </div>
         <div className="relative z-10 text-center text-white px-4 animate-fadeIn">
           <button
             onClick={() => onNavigate('menu')}
@@ -44,21 +60,37 @@ export default function HomePage({ onNavigate }: HomePageProps) {
         </div>
       </div>
 
-      {announcements.length > 0 && (
+      {activeAnnouncements.length > 0 && (
         <div className="max-w-7xl mx-auto px-4 py-12">
-          <h2 className="text-3xl font-bold text-center mb-8 text-yellow-300">
-            Latest Announcements
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {announcements.map((announcement) => (
+          <div className="mb-6 md:mb-8 flex items-center justify-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-yellow-500/15 border border-yellow-500/40 flex items-center justify-center">
+              <Megaphone className="w-5 h-5 text-yellow-300" />
+            </div>
+            <h2 className="text-2xl md:text-3xl font-bold text-yellow-300">
+              Latest Announcements
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-6">
+            {activeAnnouncements.map((announcement) => (
               <div
                 key={announcement.id}
-                className="bg-white rounded-xl shadow-lg p-6 transform hover:scale-105 transition-all hover:shadow-2xl"
+                className="group rounded-2xl border border-yellow-500/30 bg-neutral-900/70 p-5 md:p-6 shadow-lg hover:border-yellow-400/60 hover:bg-neutral-900/90 transition-all"
               >
-                <h3 className="text-xl font-bold text-yellow-500 mb-3">
+                <div className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-green-500/15 text-green-300 border border-green-500/30 mb-3">
+                  Active now
+                </div>
+                <div className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-yellow-500/15 text-yellow-200 border border-yellow-500/30 mb-3 ml-2">
+                  Promo Update
+                </div>
+                <h3 className="text-xl font-bold text-yellow-300 mb-2 leading-tight">
                   {announcement.title}
                 </h3>
-                <p className="text-gray-700">{announcement.content}</p>
+                <p className="text-gray-200 leading-relaxed">
+                  {announcement.content}
+                </p>
+                <p className="mt-4 text-xs text-gray-400">
+                  {new Date(announcement.created_at).toLocaleString()}
+                </p>
               </div>
             ))}
           </div>
@@ -101,6 +133,17 @@ export default function HomePage({ onNavigate }: HomePageProps) {
           </div>
         </div>
       </div>
+      <style>{`
+        @keyframes kaedys-marquee-left {
+          0% { transform: translateX(0%); }
+          100% { transform: translateX(-50%); }
+        }
+        .marquee-track {
+          display: inline-flex;
+          min-width: 200%;
+          animation: kaedys-marquee-left 10s linear infinite;
+        }
+      `}</style>
     </div>
   );
 }

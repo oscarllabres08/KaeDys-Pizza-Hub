@@ -170,8 +170,9 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
           />
 
           {/* Right drawer */}
-          <div className="w-64 max-w-[75vw] bg-black border-l border-yellow-500/40 shadow-2xl">
-            <div className="px-3 pt-3 pb-4 space-y-1">
+          <div className="w-48 max-w-[62vw] bg-black border-l border-yellow-500/40 shadow-2xl">
+            <div className="h-full px-3 pt-3 pb-4 flex flex-col">
+              <div className="space-y-1">
               {publicPages.map((page) => (
                 <button
                   key={page.id}
@@ -191,7 +192,6 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
 
               {user && (
                 <>
-                  <div className="my-2 border-t border-yellow-500/25" />
                   <button
                     onClick={() => handleNavigation('profile')}
                     className="block w-full text-left px-3 py-2 rounded-lg text-base font-semibold text-yellow-300 hover:bg-yellow-500 hover:text-black transition-all"
@@ -201,7 +201,12 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                       <span>My Profile</span>
                     </span>
                   </button>
+                </>
+              )}
+              </div>
 
+              <div className="mt-auto pt-3 border-t border-yellow-500/25">
+                {user ? (
                   <button
                     onClick={handleSignOutClick}
                     className="block w-full text-left px-3 py-2 rounded-lg text-base font-semibold text-yellow-300 hover:bg-yellow-500 hover:text-black transition-all"
@@ -211,12 +216,7 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                       <span>Sign Out</span>
                     </span>
                   </button>
-                </>
-              )}
-
-              {!user && (
-                <>
-                  <div className="my-2 border-t border-yellow-500/25" />
+                ) : (
                   <button
                     onClick={() => handleNavigation('auth')}
                     className={`block w-full text-left px-3 py-2 rounded-lg text-base font-semibold transition-all ${
@@ -230,8 +230,8 @@ export default function Navigation({ currentPage, onNavigate }: NavigationProps)
                       <span>Sign In / Sign Up</span>
                     </span>
                   </button>
-                </>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>

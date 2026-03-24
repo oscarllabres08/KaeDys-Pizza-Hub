@@ -48,6 +48,7 @@ export type MenuItem = {
   image_url: string;
   category: string;
   custom_category?: string | null;
+  subcategory?: string | null;
   is_available: boolean;
   display_order?: number;
   created_at: string;

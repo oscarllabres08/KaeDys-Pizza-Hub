@@ -10,6 +10,7 @@ type MenuPageProps = {
 
 export default function MenuPage({ onNavigate }: MenuPageProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string>('All');
   const [addedItems, setAddedItems] = useState<Set<string>>(new Set());
   const [previewItem, setPreviewItem] = useState<MenuItem | null>(null);
   const [search, setSearch] = useState('');
@@ -45,17 +46,65 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
     return item.is_available;
   };
 
-  const categories = ['All', 'Pizza', 'Budget Meals', 'Silog Meals', 'Drinks'];
+  const normalizeLabel = (value: string) => value.trim().toLowerCase();
+
+  const getMainCategoryLabel = (item: MenuItem) =>
+    item.category === 'Others' ? item.custom_category?.trim() || 'Others' : item.category?.trim() || 'Others';
+
+  const preferredMainCategories = ['Pizza', 'All Day Silog Meals', 'Chicken', 'Nasi Goreng', 'Drinks'];
+  const foundCategories = Array.from(
+    new Set(
+      menuItems
+        .map((item) => getMainCategoryLabel(item))
+        .filter((value): value is string => !!value)
+    )
+  );
+  const categories = [
+    'All',
+    ...preferredMainCategories.filter((category) => foundCategories.includes(category)),
+    ...foundCategories
+      .filter((category) => !preferredMainCategories.includes(category))
+      .sort((a, b) => a.localeCompare(b)),
+  ];
+
+  const subcategoryOptions =
+    selectedCategory === 'All'
+      ? []
+      : Array.from(
+          menuItems
+            .filter((item) => getMainCategoryLabel(item) === selectedCategory)
+            .reduce((map, item) => {
+              const raw = item.subcategory?.trim() || '';
+              if (!raw) return map;
+              const key = normalizeLabel(raw);
+              if (!map.has(key)) map.set(key, raw);
+              return map;
+            }, new Map<string, string>())
+            .values()
+        ).sort((a, b) => a.localeCompare(b));
+
+  useEffect(() => {
+    setSelectedSubcategory('All');
+  }, [selectedCategory]);
 
   const filteredItems = menuItems.filter((item) => {
+    const mainCategory = getMainCategoryLabel(item);
+    const itemSubcategory = item.subcategory?.trim() || '';
     const matchesCategory =
-      selectedCategory === 'All' ? true : item.category === selectedCategory;
+      selectedCategory === 'All' ? true : mainCategory === selectedCategory;
+    const matchesSubcategory =
+      selectedSubcategory === 'All'
+        ? true
+        : normalizeLabel(itemSubcategory) === normalizeLabel(selectedSubcategory);
     const q = search.trim().toLowerCase();
     const matchesSearch =
       q.length === 0 ||
       item.name.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q);
-    return matchesCategory && matchesSearch;
+      item.description.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q) ||
+      (item.custom_category || '').toLowerCase().includes(q) ||
+      (item.subcategory || '').toLowerCase().includes(q);
+    return matchesCategory && matchesSubcategory && matchesSearch;
   });
 
   const handleAddToCart = (item: MenuItem) => {
@@ -118,7 +167,9 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
             {categories.map((category) => (
               <button
                 key={category}
-                onClick={() => setSelectedCategory(category)}
+                onClick={() => {
+                  setSelectedCategory(category);
+                }}
                 className={`px-5 py-2 rounded-lg font-semibold text-sm flex-none ${
                   selectedCategory === category
                     ? 'bg-yellow-400 text-black shadow-md'
@@ -130,6 +181,37 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
             ))}
           </div>
         </div>
+        {subcategoryOptions.length > 0 && (
+          <div className="mb-6 overflow-x-auto">
+            <div className="flex gap-3 pb-2 min-w-max">
+              <button
+                type="button"
+                onClick={() => setSelectedSubcategory('All')}
+                className={`px-4 py-1.5 rounded-lg font-semibold text-xs flex-none ${
+                  selectedSubcategory === 'All'
+                    ? 'bg-yellow-400 text-black shadow-md'
+                    : 'bg-neutral-800 text-gray-200 hover:bg-neutral-700'
+                }`}
+              >
+                All {selectedCategory}
+              </button>
+              {subcategoryOptions.map((subcategory) => (
+                <button
+                  key={subcategory}
+                  type="button"
+                  onClick={() => setSelectedSubcategory(subcategory)}
+                  className={`px-4 py-1.5 rounded-lg font-semibold text-xs flex-none ${
+                    selectedSubcategory === subcategory
+                      ? 'bg-yellow-400 text-black shadow-md'
+                      : 'bg-neutral-800 text-gray-200 hover:bg-neutral-700'
+                  }`}
+                >
+                  {subcategory}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="text-center py-10 text-gray-300">Loading menu...</div>
@@ -170,6 +252,10 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
                     <h3 className="text-sm font-bold text-yellow-300 mb-0.5 leading-snug line-clamp-2">
                       {item.name}
                     </h3>
+                    <p className="text-[11px] text-gray-400 mb-1 leading-snug">
+                      {item.category === 'Others' ? item.custom_category || 'Others' : item.category}
+                      {item.subcategory ? ` > ${item.subcategory}` : ''}
+                    </p>
                     <p className="text-gray-300 text-xs mb-2 leading-snug line-clamp-2">
                       {item.description}
                     </p>
