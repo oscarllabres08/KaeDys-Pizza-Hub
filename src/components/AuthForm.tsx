@@ -15,10 +15,13 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [showPrivacyAfterSignUp, setShowPrivacyAfterSignUp] = useState(false);
   const { signIn, signUp, signOut } = useAuth();
 
   const [formData, setFormData] = useState({
+    login: '',
     email: '',
+    username: '',
     password: '',
     confirmPassword: '',
     full_name: '',
@@ -37,11 +40,19 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
           setError('Password and Confirm Password do not match.');
           return;
         }
+        if (!adminSignUp) {
+          const normalizedUsername = formData.username.trim().toLowerCase();
+          if (!/^[a-z0-9_]{3,30}$/.test(normalizedUsername)) {
+            setError('Username must be 3-30 chars, letters/numbers/underscore only.');
+            return;
+          }
+        }
         const { requiresAdminApproval } = await signUp(
           formData.email,
           formData.password,
           {
             full_name: formData.full_name,
+            username: formData.username.trim().toLowerCase(),
             phone: formData.phone,
             address: formData.address,
           },
@@ -61,13 +72,17 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
         }
 
         setSuccessMessage('Account created successfully');
-        setLoading(false);
-        setTimeout(() => {
-          onSuccess();
-        }, 1500);
+        if (adminSignUp) {
+          setLoading(false);
+          setTimeout(() => {
+            onSuccess();
+          }, 1200);
+          return;
+        }
+        setShowPrivacyAfterSignUp(true);
         return;
       }
-      await signIn(formData.email, formData.password);
+      await signIn(formData.login, formData.password);
       onSuccess();
     } catch (err: unknown) {
       const error = err as Error;
@@ -125,6 +140,23 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
                 />
               </div>
 
+              {!adminSignUp && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-1">
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.username}
+                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                    className="w-full px-4 py-3 border border-gray-700 rounded-lg bg-black text-white focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all"
+                    placeholder="e.g. oscar_jomer"
+                  />
+                  <p className="text-[11px] text-gray-400 mt-1">Letters, numbers, underscore only (3-30 chars)</p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-200 mb-1">
                   Phone Number
@@ -159,15 +191,20 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
 
           <div>
             <label className="block text-sm font-medium text-gray-200 mb-1">
-              Email Address
+              {isSignUp ? 'Email Address' : adminSignUp ? 'Email Address' : 'Email or Username'}
             </label>
             <input
-              type="email"
+              type={isSignUp || adminSignUp ? 'email' : 'text'}
               required
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              value={isSignUp ? formData.email : formData.login}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  ...(isSignUp ? { email: e.target.value } : { login: e.target.value }),
+                })
+              }
               className="w-full px-4 py-3 border border-gray-700 rounded-lg bg-black text-white focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all"
-              placeholder="Enter your email"
+              placeholder={isSignUp || adminSignUp ? 'Enter your email' : 'Enter email or username'}
             />
           </div>
 
@@ -243,6 +280,46 @@ export default function AuthForm({ onSuccess, requireAddress = true, adminSignUp
           </button>
         </div>
       </div>
+
+      {showPrivacyAfterSignUp && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-sm px-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-neutral-950 border border-yellow-500/35 shadow-2xl overflow-hidden">
+            <div className="p-5 md:p-6">
+              <h3 className="text-xl font-bold text-yellow-300">Privacy Policy</h3>
+              <p className="text-xs text-gray-400 mt-1">By continuing, you acknowledge and accept this privacy notice.</p>
+
+              <div className="mt-4 max-h-[55vh] overflow-auto rounded-xl border border-yellow-500/20 bg-black/40 p-4 text-sm text-gray-200 space-y-3">
+                <p>
+                  We collect account and order information to provide food ordering and delivery services.
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Collected data may include full name, username, email, phone number, address, and order history.</li>
+                  <li>For GCash orders, we also process payment reference and uploaded proof of payment for verification.</li>
+                  <li>We use your data to process orders, contact you about deliveries, and provide customer support.</li>
+                  <li>Authorized staff only can access your order data for operations and verification.</li>
+                  <li>We do not sell your personal data to third parties.</li>
+                </ul>
+                <p>
+                  By using this service, you consent to the collection and processing of your data for these purposes.
+                </p>
+              </div>
+
+              <div className="mt-5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPrivacyAfterSignUp(false);
+                    onSuccess();
+                  }}
+                  className="px-4 py-2 rounded-lg bg-yellow-400 text-black font-semibold hover:bg-yellow-300 transition-all"
+                >
+                  I Agree and Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

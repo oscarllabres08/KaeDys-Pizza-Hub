@@ -15,7 +15,7 @@ type OrderInsertRow = {
 
 type AdminOrderNotificationsProps = {
   enabled: boolean;
-  soundSrc?: string;
+  soundSrc?: string | null;
 };
 
 type NotificationItem = {
@@ -38,13 +38,14 @@ function extractSpecialInstructions(notes: string | null): string | null {
 
 export default function AdminOrderNotifications({
   enabled,
-  soundSrc = '/sounds/new-order.mp3',
+  soundSrc = null,
 }: AdminOrderNotificationsProps) {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastSeenCreatedAtRef = useRef<string | null>(null);
 
   const audio = useMemo(() => {
+    if (!soundSrc) return null;
     const el = new Audio(soundSrc);
     el.preload = 'auto';
     el.volume = 1;

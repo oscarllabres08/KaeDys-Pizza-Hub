@@ -9,7 +9,7 @@ import {
   MenuItem,
   Order,
   OrderItem,
-  SiteSettings,
+  PaymentMethodSetting,
 } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -18,6 +18,12 @@ import {
   Megaphone,
   Gamepad2,
   QrCode,
+  Archive,
+  Users,
+  ChevronDown,
+  Ban,
+  UserCheck,
+  Trash2,
   ClipboardList,
   Loader2,
   Menu as MenuIcon,
@@ -31,7 +37,7 @@ type OrderWithItems = Order & {
   order_items: OrderItem[];
 };
 
-type TabId = 'orders' | 'menu' | 'announcements' | 'gallery' | 'gcash' | 'game' | 'admins';
+type TabId = 'orders' | 'archived' | 'menu' | 'announcements' | 'gallery' | 'gcash' | 'game' | 'users' | 'admins';
 
 const STATUS_LABELS: { id: Order['status']; label: string }[] = [
   { id: 'pending', label: 'Pending' },
@@ -43,15 +49,18 @@ const STATUS_LABELS: { id: Order['status']; label: string }[] = [
 ];
 
 const ADMIN_TAB_STORAGE_KEY = 'kaedys_admin_active_tab';
+const WALLET_METHODS: PaymentMethodSetting['method'][] = ['GCash', 'Maya', 'PayPal'];
 
 function isTabId(value: string): value is TabId {
   return (
     value === 'orders' ||
+    value === 'archived' ||
     value === 'menu' ||
     value === 'announcements' ||
     value === 'gallery' ||
     value === 'gcash' ||
     value === 'game' ||
+    value === 'users' ||
     value === 'admins'
   );
 }
@@ -179,6 +188,67 @@ async function sendStatusEmail(order: Order, newStatus: Order['status']) {
   }
 }
 
+type ImageCompressOptions = {
+  maxWidth: number;
+  maxHeight: number;
+  maxBytes: number;
+  quality?: number;
+};
+
+async function compressImageBeforeUpload(file: File, opts: ImageCompressOptions): Promise<File> {
+  if (!file.type.startsWith('image/')) return file;
+  if (file.size <= opts.maxBytes) return file;
+
+  const qualityStart = opts.quality ?? 0.82;
+  const qualities = [qualityStart, 0.72, 0.62, 0.52, 0.42];
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = objectUrl;
+    });
+
+    const ratio = Math.min(opts.maxWidth / img.width, opts.maxHeight / img.height, 1);
+    const targetW = Math.max(1, Math.round(img.width * ratio));
+    const targetH = Math.max(1, Math.round(img.height * ratio));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+
+    let bestBlob: Blob | null = null;
+    for (const q of qualities) {
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((b) => resolve(b), 'image/webp', q);
+      });
+      if (!blob) continue;
+      if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+      if (blob.size <= opts.maxBytes) {
+        bestBlob = blob;
+        break;
+      }
+    }
+
+    if (!bestBlob || bestBlob.size >= file.size) return file;
+
+    const safeBaseName = file.name.replace(/\.[^.]+$/, '');
+    return new File([bestBlob], `${safeBaseName}.webp`, {
+      type: 'image/webp',
+      lastModified: Date.now(),
+    });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export default function AdminPage() {
   const { signOut, adminProfile } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>(() => {
@@ -193,6 +263,11 @@ export default function AdminPage() {
 
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [markingAllCompleted, setMarkingAllCompleted] = useState(false);
+  const [archivedOrders, setArchivedOrders] = useState<OrderWithItems[]>([]);
+  const [archivedOrdersLoading, setArchivedOrdersLoading] = useState(false);
+  const [selectedArchivedOrderIds, setSelectedArchivedOrderIds] = useState<Set<string>>(new Set());
+  const [deletingSelectedArchivedOrders, setDeletingSelectedArchivedOrders] = useState(false);
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [menuLoading, setMenuLoading] = useState(false);
@@ -223,15 +298,50 @@ export default function AdminPage() {
   const [gameSettings, setGameSettings] = useState<GameSettings | null>(null);
   const [gameLoading, setGameLoading] = useState(false);
 
-  const [gcashSettings, setGcashSettings] = useState<Pick<SiteSettings, 'gcash_qr_storage_path' | 'updated_at'> | null>(
-    null
-  );
-  const [gcashLoading, setGcashLoading] = useState(false);
-  const [gcashUploading, setGcashUploading] = useState(false);
+  const [paymentSettings, setPaymentSettings] = useState<Record<PaymentMethodSetting['method'], PaymentMethodSetting>>({
+    GCash: { method: 'GCash', qr_storage_path: null, account_number: '', updated_at: new Date().toISOString() },
+    Maya: { method: 'Maya', qr_storage_path: null, account_number: '', updated_at: new Date().toISOString() },
+    PayPal: { method: 'PayPal', qr_storage_path: null, account_number: '', updated_at: new Date().toISOString() },
+  });
+  const [paymentDrafts, setPaymentDrafts] = useState<Record<PaymentMethodSetting['method'], { file: File | null; accountNumber: string }>>({
+    GCash: { file: null, accountNumber: '' },
+    Maya: { file: null, accountNumber: '' },
+    PayPal: { file: null, accountNumber: '' },
+  });
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [savingPaymentMethod, setSavingPaymentMethod] = useState<PaymentMethodSetting['method'] | null>(null);
 
   const [admins, setAdmins] = useState<AdminProfile[]>([]);
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [customersById, setCustomersById] = useState<Record<string, CustomerProfile>>({});
+  const [managedUsers, setManagedUsers] = useState<CustomerProfile[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [noticeModal, setNoticeModal] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    variant: 'success' | 'error' | 'info';
+  }>({
+    open: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+  const [confirmModal, setConfirmModal] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel: string;
+    resolver: ((value: boolean) => void) | null;
+  }>({
+    open: false,
+    title: '',
+    message: '',
+    confirmLabel: 'Confirm',
+    cancelLabel: 'Cancel',
+    resolver: null,
+  });
 
   useEffect(() => {
     localStorage.setItem(ADMIN_TAB_STORAGE_KEY, activeTab);
@@ -252,7 +362,7 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (!isMasterAdmin && activeTab === 'admins') {
+    if (!isMasterAdmin && (activeTab === 'admins' || activeTab === 'users' || activeTab === 'gcash')) {
       setActiveTab('orders');
     }
   }, [activeTab, isMasterAdmin]);
@@ -305,13 +415,20 @@ export default function AdminPage() {
     });
   }, [menuCategory, menuItems, menuSearch]);
 
-  const gcashPreviewUrl = useMemo(() => {
-    if (!gcashSettings?.gcash_qr_storage_path) return null;
-    const { data } = supabase.storage
-      .from('gcash-qr')
-      .getPublicUrl(gcashSettings.gcash_qr_storage_path);
-    return `${data.publicUrl}?v=${encodeURIComponent(gcashSettings.updated_at)}`;
-  }, [gcashSettings]);
+  const paymentPreviewUrls = useMemo(() => {
+    const result: Record<PaymentMethodSetting['method'], string | null> = {
+      GCash: null,
+      Maya: null,
+      PayPal: null,
+    };
+    for (const method of WALLET_METHODS) {
+      const row = paymentSettings[method];
+      if (!row?.qr_storage_path) continue;
+      const { data } = supabase.storage.from('payment-qr').getPublicUrl(row.qr_storage_path);
+      result[method] = `${data.publicUrl}?v=${encodeURIComponent(row.updated_at)}`;
+    }
+    return result;
+  }, [paymentSettings]);
 
   useEffect(() => {
     if (menuCategory !== 'All' && !filterCategoryOptions.includes(menuCategory)) {
@@ -322,11 +439,23 @@ export default function AdminPage() {
   const fetchOrders = useCallback(async () => {
     setOrdersLoading(true);
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('orders')
         .select('*, order_items (*)')
+        .eq('is_archived', false)
         .order('created_at', { ascending: false })
         .limit(50);
+
+      if (error && (error as { code?: string }).code === '42703') {
+        // Backward compatibility while archive migration is not yet applied.
+        const fallback = await supabase
+          .from('orders')
+          .select('*, order_items (*)')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        data = fallback.data;
+        error = fallback.error;
+      }
 
       if (error) throw error;
       const ordersData = (data || []) as OrderWithItems[];
@@ -351,6 +480,54 @@ export default function AdminPage() {
       console.error('Error loading orders', error);
     } finally {
       setOrdersLoading(false);
+    }
+  }, []);
+
+  const fetchArchivedOrders = useCallback(async () => {
+    setArchivedOrdersLoading(true);
+    try {
+      let { data, error } = await supabase
+        .from('orders')
+        .select('*, order_items (*)')
+        .eq('is_archived', true)
+        .order('archived_at', { ascending: false })
+        .limit(100);
+
+      if (error && (error as { code?: string }).code === '42703') {
+        // If archive columns are missing, keep archived list empty instead of breaking admin page.
+        setArchivedOrders([]);
+        return;
+      }
+
+      if (error) throw error;
+      const archived = (data || []) as OrderWithItems[];
+      setArchivedOrders(archived);
+      setSelectedArchivedOrderIds((prev) => {
+        const ids = new Set(archived.map((o) => o.id));
+        const next = new Set<string>();
+        prev.forEach((id) => {
+          if (ids.has(id)) next.add(id);
+        });
+        return next;
+      });
+
+      const userIds = Array.from(new Set(archived.map((o) => o.user_id).filter(Boolean)));
+      if (userIds.length > 0) {
+        const { data: customers, error: custError } = await supabase
+          .from('customer_profiles')
+          .select('*')
+          .in('id', userIds);
+        if (custError) throw custError;
+        const map: Record<string, CustomerProfile> = {};
+        for (const c of customers || []) {
+          map[c.id] = c as CustomerProfile;
+        }
+        setCustomersById((prev) => ({ ...prev, ...map }));
+      }
+    } catch (error) {
+      console.error('Error loading archived orders', error);
+    } finally {
+      setArchivedOrdersLoading(false);
     }
   }, []);
 
@@ -383,6 +560,112 @@ export default function AdminPage() {
       await fetchOrders();
     } catch (error) {
       console.error('Error updating order status', error);
+    }
+  };
+
+  const markAllOrdersCompleted = async () => {
+    const targetIds = orders
+      .filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
+      .map((o) => o.id);
+
+    if (targetIds.length === 0) {
+      openNoticeModal('No active orders', 'There are no active orders to mark as completed.', 'info');
+      return;
+    }
+
+    const ok = await askConfirm(
+      'Mark all as completed',
+      `Mark ${targetIds.length} order(s) as completed and move them to archive?`,
+      'Yes, complete all',
+      'Cancel'
+    );
+    if (!ok) return;
+
+    setMarkingAllCompleted(true);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({ status: 'completed' })
+        .in('id', targetIds);
+      if (error) throw error;
+
+      await fetchOrders();
+      await fetchArchivedOrders();
+      openNoticeModal('Orders completed', `${targetIds.length} order(s) moved to archive.`, 'success');
+    } catch (error) {
+      console.error('Error marking all orders completed', error);
+      openNoticeModal('Update failed', 'Could not mark all orders as completed.', 'error');
+    } finally {
+      setMarkingAllCompleted(false);
+    }
+  };
+
+  const deleteArchivedOrder = async (order: OrderWithItems) => {
+    const ok = await askConfirm(
+      'Delete archived order',
+      `Delete archived order #${order.id.slice(0, 8)} permanently?`,
+      'Delete',
+      'Cancel'
+    );
+    if (!ok) return;
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .delete()
+        .eq('id', order.id)
+        .eq('is_archived', true);
+      if (error) throw error;
+      await fetchArchivedOrders();
+      openNoticeModal('Archived order deleted', `Order #${order.id.slice(0, 8)} was deleted.`, 'success');
+    } catch (error) {
+      console.error('Error deleting archived order', error);
+      openNoticeModal('Delete failed', 'Could not delete archived order. Please try again.', 'error');
+    }
+  };
+
+  const toggleSelectArchivedOrder = (orderId: string) => {
+    setSelectedArchivedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
+
+  const selectAllArchivedOrders = () => {
+    setSelectedArchivedOrderIds(new Set(archivedOrders.map((o) => o.id)));
+  };
+
+  const clearArchivedSelection = () => {
+    setSelectedArchivedOrderIds(new Set());
+  };
+
+  const deleteSelectedArchivedOrders = async () => {
+    const ids = Array.from(selectedArchivedOrderIds);
+    if (ids.length === 0) return;
+    const ok = await askConfirm(
+      'Delete selected archived orders',
+      `Delete ${ids.length} archived order(s) permanently?`,
+      'Delete selected',
+      'Cancel'
+    );
+    if (!ok) return;
+    setDeletingSelectedArchivedOrders(true);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .delete()
+        .eq('is_archived', true)
+        .in('id', ids);
+      if (error) throw error;
+      await fetchArchivedOrders();
+      setSelectedArchivedOrderIds(new Set());
+      openNoticeModal('Archived orders deleted', `${ids.length} archived order(s) were deleted.`, 'success');
+    } catch (error) {
+      console.error('Error deleting selected archived orders', error);
+      openNoticeModal('Delete failed', 'Could not delete selected archived orders.', 'error');
+    } finally {
+      setDeletingSelectedArchivedOrders(false);
     }
   };
 
@@ -431,14 +714,16 @@ export default function AdminPage() {
   useEffect(() => {
     // Always load admin data for any logged-in user on the admin site
     fetchOrders();
+    fetchArchivedOrders();
     fetchMenuItems();
     fetchAnnouncements();
     fetchGallery();
     fetchGameSettings();
     if (isMasterAdmin) {
       fetchAdmins();
+      fetchManagedUsers();
     }
-  }, [isMasterAdmin, fetchOrders]);
+  }, [isMasterAdmin, fetchOrders, fetchArchivedOrders]);
 
   // Realtime updates for orders list:
   // re-fetch only when there are INSERT/UPDATE/DELETE events on orders
@@ -453,6 +738,8 @@ export default function AdminPage() {
           // Only refresh when Orders tab is visible to avoid surprise jumps
           if (activeTab === 'orders') {
             fetchOrders();
+          } else if (activeTab === 'archived') {
+            fetchArchivedOrders();
           }
         }
       )
@@ -461,7 +748,7 @@ export default function AdminPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [activeTab, fetchOrders]);
+  }, [activeTab, fetchOrders, fetchArchivedOrders]);
 
   const createAnnouncement = async () => {
     if (!newAnnouncement.title || !newAnnouncement.content) return;
@@ -512,17 +799,23 @@ export default function AdminPage() {
   const handleGalleryUpload = async (file: File | null) => {
     if (!file) return;
     if (galleryImages.length >= 10) {
-      alert('Maximum of 10 gallery images reached.');
+      openNoticeModal('Limit reached', 'Maximum of 10 gallery images reached.', 'info');
       return;
     }
 
     setUploadingImage(true);
     try {
-      const fileExt = file.name.split('.').pop();
+      const uploadFile = await compressImageBeforeUpload(file, {
+        maxWidth: 1400,
+        maxHeight: 1400,
+        maxBytes: 700 * 1024,
+        quality: 0.82,
+      });
+      const fileExt = uploadFile.name.split('.').pop();
       const fileName = `gallery-${Date.now()}.${fileExt}`;
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('gallery')
-        .upload(fileName, file);
+        .upload(fileName, uploadFile);
 
       if (uploadError) throw uploadError;
 
@@ -546,84 +839,101 @@ export default function AdminPage() {
     }
   };
 
-  const fetchGcashSettings = useCallback(async () => {
-    setGcashLoading(true);
+  const fetchPaymentSettings = useCallback(async () => {
+    setPaymentsLoading(true);
     try {
       const { data, error } = await supabase
-        .from('site_settings')
-        .select('gcash_qr_storage_path, updated_at')
-        .eq('id', 1)
-        .maybeSingle();
-
+        .from('payment_method_settings')
+        .select('method, qr_storage_path, account_number, updated_at')
+        .in('method', WALLET_METHODS);
       if (error) throw error;
-      setGcashSettings({
-        gcash_qr_storage_path: data?.gcash_qr_storage_path ?? null,
-        updated_at: data?.updated_at ?? new Date().toISOString(),
-      });
+
+      const nextSettings: Record<PaymentMethodSetting['method'], PaymentMethodSetting> = {
+        GCash: { method: 'GCash', qr_storage_path: null, account_number: '', updated_at: new Date().toISOString() },
+        Maya: { method: 'Maya', qr_storage_path: null, account_number: '', updated_at: new Date().toISOString() },
+        PayPal: { method: 'PayPal', qr_storage_path: null, account_number: '', updated_at: new Date().toISOString() },
+      };
+      const nextDrafts: Record<PaymentMethodSetting['method'], { file: File | null; accountNumber: string }> = {
+        GCash: { file: null, accountNumber: '' },
+        Maya: { file: null, accountNumber: '' },
+        PayPal: { file: null, accountNumber: '' },
+      };
+
+      for (const row of (data || []) as PaymentMethodSetting[]) {
+        nextSettings[row.method] = {
+          method: row.method,
+          qr_storage_path: row.qr_storage_path ?? null,
+          account_number: row.account_number ?? '',
+          updated_at: row.updated_at || new Date().toISOString(),
+        };
+        nextDrafts[row.method] = {
+          file: null,
+          accountNumber: row.account_number ?? '',
+        };
+      }
+      setPaymentSettings(nextSettings);
+      setPaymentDrafts(nextDrafts);
     } catch (error) {
-      console.error('Error loading GCash QR settings', error);
-      setGcashSettings(null);
+      console.error('Error loading payment settings', error);
     } finally {
-      setGcashLoading(false);
+      setPaymentsLoading(false);
     }
   }, []);
 
-  const handleGcashQrUpload = async (file: File | null) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('Please choose an image file (PNG, JPG, etc.).');
-      return;
-    }
-    setGcashUploading(true);
+  const savePaymentMethod = async (method: PaymentMethodSetting['method']) => {
+    const draft = paymentDrafts[method];
+    setSavingPaymentMethod(method);
+    const previous = paymentSettings[method];
+    let newPath = previous.qr_storage_path;
     try {
-      const { data: currentRow, error: readErr } = await supabase
-        .from('site_settings')
-        .select('gcash_qr_storage_path')
-        .eq('id', 1)
-        .maybeSingle();
-      if (readErr) throw readErr;
-      const prevPath = currentRow?.gcash_qr_storage_path ?? null;
-
-      const fileExt = file.name.split('.').pop() || 'png';
-      const objectPath = `gcash-${Date.now()}.${fileExt}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('gcash-qr')
-        .upload(objectPath, file, { cacheControl: '3600', upsert: false });
-
-      if (uploadError) throw uploadError;
-
-      const newPath = uploadData.path;
-      const { error: dbError } = await supabase
-        .from('site_settings')
-        .update({ gcash_qr_storage_path: newPath, updated_at: new Date().toISOString() })
-        .eq('id', 1);
-
-      if (dbError) {
-        await supabase.storage.from('gcash-qr').remove([newPath]);
-        throw dbError;
+      if (draft.file) {
+        if (!draft.file.type.startsWith('image/')) {
+          throw new Error('Please choose an image file (PNG, JPG, etc.).');
+        }
+        const ext = draft.file.name.split('.').pop() || 'png';
+        const objectPath = `${method.toLowerCase()}-${Date.now()}.${ext}`;
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('payment-qr')
+          .upload(objectPath, draft.file, { cacheControl: '3600', upsert: false });
+        if (uploadError) throw uploadError;
+        newPath = uploadData.path;
       }
 
-      if (prevPath && prevPath !== newPath) {
-        const { error: rmError } = await supabase.storage.from('gcash-qr').remove([prevPath]);
-        if (rmError) console.warn('Could not delete previous GCash QR from storage', rmError);
+      const { error: updateError } = await supabase
+        .from('payment_method_settings')
+        .update({
+          qr_storage_path: newPath,
+          account_number: draft.accountNumber.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('method', method);
+
+      if (updateError) {
+        if (draft.file && newPath && newPath !== previous.qr_storage_path) {
+          await supabase.storage.from('payment-qr').remove([newPath]);
+        }
+        throw updateError;
       }
 
-      await fetchGcashSettings();
-      alert('GCash QR code updated. Customers will see the new image.');
+      if (draft.file && previous.qr_storage_path && previous.qr_storage_path !== newPath) {
+        const { error: rmErr } = await supabase.storage.from('payment-qr').remove([previous.qr_storage_path]);
+        if (rmErr) console.warn(`Could not remove old ${method} QR`, rmErr);
+      }
+
+      await fetchPaymentSettings();
+      openNoticeModal('Payment details updated', `${method} payment details were updated successfully.`, 'success');
     } catch (error) {
-      console.error('Error uploading GCash QR', error);
-      alert(
-        'Failed to update GCash QR. Only approved admins can upload, and the database migration for site_settings + storage must be applied.'
-      );
+      console.error(`Error saving ${method} payment settings`, error);
+      openNoticeModal('Update failed', `Failed to save ${method} settings. Please try again.`, 'error');
     } finally {
-      setGcashUploading(false);
+      setSavingPaymentMethod(null);
     }
   };
 
   useEffect(() => {
     if (activeTab !== 'gcash') return;
-    void fetchGcashSettings();
-  }, [activeTab, fetchGcashSettings]);
+    void fetchPaymentSettings();
+  }, [activeTab, fetchPaymentSettings]);
 
   const fetchGameSettings = async () => {
     setGameLoading(true);
@@ -659,10 +969,114 @@ export default function AdminPage() {
     }
   };
 
+  const fetchManagedUsers = async () => {
+    setUsersLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('customer_profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setManagedUsers((data || []) as CustomerProfile[]);
+    } catch (error) {
+      console.error('Error loading users', error);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const openNoticeModal = (title: string, message: string, variant: 'success' | 'error' | 'info' = 'info') => {
+    setNoticeModal({ open: true, title, message, variant });
+  };
+
+  const askConfirm = (
+    title: string,
+    message: string,
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel'
+  ) =>
+    new Promise<boolean>((resolve) => {
+      setConfirmModal({
+        open: true,
+        title,
+        message,
+        confirmLabel,
+        cancelLabel,
+        resolver: resolve,
+      });
+    });
+
+  const closeConfirmModal = (result: boolean) => {
+    setConfirmModal((prev) => {
+      prev.resolver?.(result);
+      return { ...prev, open: false, resolver: null };
+    });
+  };
+
+  const suspendUser = async (customer: CustomerProfile, hours: number) => {
+    try {
+      const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+      const { error } = await supabase
+        .from('customer_profiles')
+        .update({
+          suspended_until: until,
+          suspension_reason: `Suspended by master admin for ${hours} hour(s).`,
+        })
+        .eq('id', customer.id);
+      if (error) throw error;
+      await fetchManagedUsers();
+      openNoticeModal('User suspended', `User suspended until ${new Date(until).toLocaleString()}.`, 'success');
+    } catch (error) {
+      console.error('Error suspending user', error);
+      openNoticeModal('Suspend failed', 'Failed to suspend user.', 'error');
+    }
+  };
+
+  const unsuspendUser = async (customer: CustomerProfile) => {
+    try {
+      const { error } = await supabase
+        .from('customer_profiles')
+        .update({
+          suspended_until: null,
+          suspension_reason: null,
+        })
+        .eq('id', customer.id);
+      if (error) throw error;
+      await fetchManagedUsers();
+    } catch (error) {
+      console.error('Error unsuspending user', error);
+      openNoticeModal('Unsuspend failed', 'Failed to remove suspension.', 'error');
+    }
+  };
+
+  const deleteUserAccount = async (customer: CustomerProfile) => {
+    const label = customer.username ? `@${customer.username}` : customer.full_name;
+    const ok = await askConfirm(
+      'Delete user account',
+      `Delete user ${label}? This permanently removes customer account and related records.`,
+      'Delete user',
+      'Cancel'
+    );
+    if (!ok) {
+      return;
+    }
+    try {
+      const { error } = await supabase.rpc('master_admin_delete_customer_account', {
+        p_user_id: customer.id,
+      });
+      if (error) throw error;
+      await fetchManagedUsers();
+      openNoticeModal('User deleted', 'User account deleted.', 'success');
+    } catch (error) {
+      console.error('Error deleting user account', error);
+      openNoticeModal('Delete failed', 'Failed to delete user account.', 'error');
+    }
+  };
+
   const updateAdminActive = async (admin: AdminProfile, makeActive: boolean) => {
     try {
       if (admin.is_master_admin && !makeActive) {
-        alert('You cannot deactivate the Master Admin account.');
+        openNoticeModal('Action blocked', 'You cannot deactivate the Master Admin account.', 'info');
         return;
       }
       const { error } = await supabase
@@ -673,7 +1087,7 @@ export default function AdminPage() {
       await fetchAdmins();
     } catch (error) {
       console.error('Error updating admin approval status', error);
-      alert('Failed to update admin status. Please try again.');
+      openNoticeModal('Update failed', 'Failed to update admin status. Please try again.', 'error');
     }
   };
 
@@ -704,7 +1118,8 @@ export default function AdminPage() {
   };
 
   const handleLogout = async () => {
-    if (!window.confirm('Are you sure you want to log out?')) return;
+    const ok = await askConfirm('Log out', 'Are you sure you want to log out?', 'Log out', 'Cancel');
+    if (!ok) return;
     try {
       await signOut();
       window.location.reload();
@@ -725,6 +1140,17 @@ export default function AdminPage() {
       >
         <ClipboardList className="w-4 h-4" />
         Orders
+      </button>
+      <button
+        onClick={() => handleSelectTab('archived')}
+        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+          activeTab === 'archived'
+            ? 'bg-yellow-400 text-black shadow-lg'
+            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
+        }`}
+      >
+        <Archive className="w-4 h-4" />
+        Archived Orders
       </button>
       <button
         onClick={() => handleSelectTab('menu')}
@@ -759,17 +1185,19 @@ export default function AdminPage() {
         <ImageIcon className="w-4 h-4" />
         Gallery
       </button>
-      <button
-        onClick={() => handleSelectTab('gcash')}
-        className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-          activeTab === 'gcash'
-            ? 'bg-yellow-400 text-black shadow-lg'
-            : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
-        }`}
-      >
-        <QrCode className="w-4 h-4" />
-        GCash QR
-      </button>
+      {isMasterAdmin && (
+        <button
+          onClick={() => handleSelectTab('gcash')}
+          className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+            activeTab === 'gcash'
+              ? 'bg-yellow-400 text-black shadow-lg'
+              : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
+          }`}
+        >
+          <QrCode className="w-4 h-4" />
+          E-wallet Payments
+        </button>
+      )}
       <button
         onClick={() => handleSelectTab('game')}
         className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
@@ -781,6 +1209,19 @@ export default function AdminPage() {
         <Gamepad2 className="w-4 h-4" />
         Discount Game
       </button>
+      {isMasterAdmin && (
+        <button
+          onClick={() => handleSelectTab('users')}
+          className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+            activeTab === 'users'
+              ? 'bg-yellow-400 text-black shadow-lg'
+              : 'bg-black/30 text-gray-200 hover:bg-neutral-800'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          User Management
+        </button>
+      )}
       {isMasterAdmin && (
         <button
           onClick={() => handleSelectTab('admins')}
@@ -801,21 +1242,31 @@ export default function AdminPage() {
     try {
       const price = Number(menuForm.price);
       if (!menuForm.name || !menuForm.description || !Number.isFinite(price)) {
-        alert('Please fill out name, description, and a valid price.');
+        openNoticeModal('Missing fields', 'Please fill out name, description, and a valid price.', 'info');
+        return;
+      }
+      if (menuForm.description.trim().length > 100) {
+        openNoticeModal('Description too long', 'Description must be 100 characters or less.', 'info');
         return;
       }
       if (menuForm.category === 'Others' && !menuForm.custom_category.trim()) {
-        alert('Please enter a custom category.');
+        openNoticeModal('Missing category', 'Please enter a custom category.', 'info');
         return;
       }
 
       let imageUrl = menuForm.image_url;
       if (menuForm.imageFile) {
-        const fileExt = menuForm.imageFile.name.split('.').pop();
+        const uploadFile = await compressImageBeforeUpload(menuForm.imageFile, {
+          maxWidth: 1600,
+          maxHeight: 1600,
+          maxBytes: 900 * 1024,
+          quality: 0.84,
+        });
+        const fileExt = uploadFile.name.split('.').pop();
         const fileName = `menu-${Date.now()}.${fileExt}`;
         const { data: uploadData, error: uploadError } = await supabase.storage
           .from('menu')
-          .upload(fileName, menuForm.imageFile);
+          .upload(fileName, uploadFile);
         if (uploadError) throw uploadError;
 
         const { data: urlData } = supabase.storage.from('menu').getPublicUrl(uploadData.path);
@@ -824,7 +1275,7 @@ export default function AdminPage() {
 
       const payload = {
         name: menuForm.name,
-        description: menuForm.description,
+        description: menuForm.description.trim(),
         price,
         category: menuForm.category,
         custom_category: menuForm.category === 'Others' ? menuForm.custom_category.trim() : null,
@@ -832,7 +1283,7 @@ export default function AdminPage() {
       };
 
       if (!payload.image_url) {
-        alert('Please upload an image.');
+        openNoticeModal('Image required', 'Please upload an image.', 'info');
         return;
       }
 
@@ -849,7 +1300,7 @@ export default function AdminPage() {
       await fetchMenuItems();
     } catch (error) {
       console.error('Error saving menu item', error);
-      alert('Failed to save menu item. Please try again.');
+      openNoticeModal('Save failed', 'Failed to save menu item. Please try again.', 'error');
     }
   };
 
@@ -863,14 +1314,97 @@ export default function AdminPage() {
       await fetchMenuItems();
     } catch (error) {
       console.error('Error deleting menu item', error);
-      alert('Failed to delete product. Please try again.');
+      openNoticeModal('Delete failed', 'Failed to delete product. Please try again.', 'error');
     } finally {
       setDeletingMenuItem(false);
     }
   };
 
+  const noticeModalEl = noticeModal.open ? (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center px-4">
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        onClick={() => setNoticeModal((m) => ({ ...m, open: false }))}
+      />
+      <div className="relative w-full max-w-md rounded-2xl border border-yellow-500/35 bg-neutral-950 shadow-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-yellow-500/20 flex items-center justify-between gap-3">
+          <p
+            className={`text-base font-bold ${
+              noticeModal.variant === 'success'
+                ? 'text-green-300'
+                : noticeModal.variant === 'error'
+                  ? 'text-red-300'
+                  : 'text-yellow-300'
+            }`}
+          >
+            {noticeModal.title}
+          </p>
+          <button
+            type="button"
+            onClick={() => setNoticeModal((m) => ({ ...m, open: false }))}
+            className="p-1.5 rounded-lg text-gray-300 hover:bg-white/10"
+            aria-label="Close notice"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          <p className="text-sm text-gray-200">{noticeModal.message}</p>
+          <div className="mt-5 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setNoticeModal((m) => ({ ...m, open: false }))}
+              className="px-4 py-2 rounded-lg bg-yellow-400 text-black font-semibold hover:bg-yellow-300 transition-all"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+  const confirmModalEl = confirmModal.open ? (
+    <div className="fixed inset-0 z-[85] flex items-center justify-center px-4">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => closeConfirmModal(false)} />
+      <div className="relative w-full max-w-md rounded-2xl border border-yellow-500/35 bg-neutral-950 shadow-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-yellow-500/20 flex items-center justify-between gap-3">
+          <p className="text-base font-bold text-yellow-300">{confirmModal.title}</p>
+          <button
+            type="button"
+            onClick={() => closeConfirmModal(false)}
+            className="p-1.5 rounded-lg text-gray-300 hover:bg-white/10"
+            aria-label="Close confirmation"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          <p className="text-sm text-gray-200">{confirmModal.message}</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => closeConfirmModal(false)}
+              className="px-4 py-2 rounded-lg border border-yellow-500/35 text-gray-100 hover:bg-white/10 transition-all"
+            >
+              {confirmModal.cancelLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => closeConfirmModal(true)}
+              className="px-4 py-2 rounded-lg bg-yellow-400 text-black font-semibold hover:bg-yellow-300 transition-all"
+            >
+              {confirmModal.confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-black to-neutral-900 pb-8">
+      {noticeModalEl}
+      {confirmModalEl}
       {/* Top bar */}
       <header className="sticky top-0 z-20 bg-black/80 backdrop-blur border-b border-yellow-500/20">
         <div className="w-full px-4 md:px-6 py-3 flex items-center justify-between gap-3">
@@ -977,6 +1511,19 @@ export default function AdminPage() {
                     Orders
                   </span>
                 </button>
+                <button
+                  onClick={() => handleSelectTab('archived')}
+                  className={`w-full inline-flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-semibold ${
+                    activeTab === 'archived'
+                      ? 'bg-yellow-400 text-black'
+                      : 'bg-neutral-800 text-gray-100'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Archive className="w-4 h-4" />
+                    Archived Orders
+                  </span>
+                </button>
 
                 <button
                   onClick={() => handleSelectTab('menu')}
@@ -1020,19 +1567,21 @@ export default function AdminPage() {
                   </span>
                 </button>
 
-                <button
-                  onClick={() => handleSelectTab('gcash')}
-                  className={`w-full inline-flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-semibold ${
-                    activeTab === 'gcash'
-                      ? 'bg-yellow-400 text-black'
-                      : 'bg-neutral-800 text-gray-100'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <QrCode className="w-4 h-4" />
-                    GCash QR
-                  </span>
-                </button>
+                {isMasterAdmin && (
+                  <button
+                    onClick={() => handleSelectTab('gcash')}
+                    className={`w-full inline-flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-semibold ${
+                      activeTab === 'gcash'
+                        ? 'bg-yellow-400 text-black'
+                        : 'bg-neutral-800 text-gray-100'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <QrCode className="w-4 h-4" />
+                      E-wallet Payments
+                    </span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => handleSelectTab('game')}
@@ -1047,6 +1596,21 @@ export default function AdminPage() {
                     Discount Game
                   </span>
                 </button>
+                {isMasterAdmin && (
+                  <button
+                    onClick={() => handleSelectTab('users')}
+                    className={`w-full inline-flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-semibold ${
+                      activeTab === 'users'
+                        ? 'bg-yellow-400 text-black'
+                        : 'bg-neutral-800 text-gray-100'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Users className="w-4 h-4" />
+                      Users
+                    </span>
+                  </button>
+                )}
                 {isMasterAdmin && (
                   <button
                     onClick={() => handleSelectTab('admins')}
@@ -1162,11 +1726,17 @@ export default function AdminPage() {
                   <label className="block text-sm font-medium text-gray-200 mb-1">Short description</label>
                   <textarea
                     value={menuForm.description}
-                    onChange={(e) => setMenuForm((p) => ({ ...p, description: e.target.value }))}
+                    onChange={(e) =>
+                      setMenuForm((p) => ({ ...p, description: e.target.value.slice(0, 100) }))
+                    }
+                    maxLength={100}
                     className="w-full px-3 py-2 rounded-lg bg-black text-white border border-yellow-500/30"
                     rows={3}
                     placeholder="Write a short description"
                   />
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    {menuForm.description.length}/100 characters
+                  </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
@@ -1265,9 +1835,19 @@ export default function AdminPage() {
 
         {activeTab === 'orders' && (
           <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
-            <div className="flex items-center gap-2 mb-4">
-              <ClipboardList className="w-5 h-5 text-yellow-400" />
-              <h2 className="text-xl font-bold text-yellow-300">Recent Orders</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <ClipboardList className="w-5 h-5 text-yellow-400" />
+                <h2 className="text-xl font-bold text-yellow-300">Recent Orders</h2>
+              </div>
+              <button
+                type="button"
+                onClick={markAllOrdersCompleted}
+                disabled={markingAllCompleted}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold bg-green-700 text-white hover:bg-green-600 transition-all disabled:opacity-60"
+              >
+                {markingAllCompleted ? 'Processing...' : 'Mark all as completed'}
+              </button>
             </div>
             {ordersLoading ? (
               <div className="flex justify-center py-8">
@@ -1346,7 +1926,7 @@ export default function AdminPage() {
 
                       {/* Right: order details */}
                       <div className="rounded-2xl border border-yellow-500/20 bg-black/30 p-4 flex flex-col">
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
                           <div className="min-w-0">
                             <p className="text-base font-bold text-yellow-200">
                               Order #{order.id.slice(0, 8)}
@@ -1486,6 +2066,104 @@ export default function AdminPage() {
           </section>
         )}
 
+        {activeTab === 'archived' && (
+          <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
+            <div className="flex items-center gap-2 mb-4">
+              <Archive className="w-5 h-5 text-yellow-400" />
+              <h2 className="text-xl font-bold text-yellow-300">Archived Orders</h2>
+            </div>
+            <p className="text-sm text-gray-300 mb-4">
+              Completed orders are auto-archived and automatically deleted after 3 days.
+            </p>
+
+            {archivedOrdersLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
+              </div>
+            ) : archivedOrders.length === 0 ? (
+              <p className="text-gray-300 text-center py-6">No archived orders yet.</p>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-col gap-3 rounded-xl border border-yellow-500/15 bg-black/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm text-gray-200">
+                    <span className="font-semibold text-yellow-300">{selectedArchivedOrderIds.size}</span> selected
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={selectAllArchivedOrders}
+                      className="px-3 py-1.5 rounded text-xs font-semibold border border-yellow-500/30 text-yellow-200 hover:bg-yellow-500/10 transition-colors"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearArchivedSelection}
+                      className="px-3 py-1.5 rounded text-xs font-semibold bg-neutral-800 text-gray-100 hover:bg-neutral-700 transition-colors"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteSelectedArchivedOrders}
+                      disabled={selectedArchivedOrderIds.size === 0 || deletingSelectedArchivedOrders}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded text-xs font-semibold bg-red-700 text-white hover:bg-red-600 transition-colors disabled:opacity-60"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {deletingSelectedArchivedOrders ? 'Deleting...' : 'Delete selected'}
+                    </button>
+                  </div>
+                </div>
+                {archivedOrders.map((order) => {
+                  const customer = customersById[order.user_id];
+                  return (
+                    <div
+                      key={order.id}
+                      className="border border-yellow-500/20 rounded-lg px-3 py-2 bg-black/35"
+                    >
+                      <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1.1fr_0.9fr_0.8fr] items-center gap-3">
+                        <div className="min-w-0 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedArchivedOrderIds.has(order.id)}
+                            onChange={() => toggleSelectArchivedOrder(order.id)}
+                            className="h-4 w-4 accent-yellow-400 shrink-0"
+                            aria-label={`Select archived order ${order.id.slice(0, 8)}`}
+                          />
+                          <p className="text-sm font-bold text-yellow-200 whitespace-nowrap">#{order.id.slice(0, 8)}</p>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-500/20 text-green-300 border border-green-500/40 whitespace-nowrap">
+                            Completed
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-300 truncate">
+                          {customer?.full_name || 'Unknown'} {customer?.email ? `(${customer.email})` : ''}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          Archived: {order.archived_at ? new Date(order.archived_at).toLocaleString() : '—'}
+                        </p>
+                        <div className="flex items-center gap-3 lg:justify-end">
+                          <p className="text-xs text-gray-300">
+                            <span className="text-gray-500">Payment:</span> {order.payment_method}
+                          </p>
+                          <p className="text-base font-bold text-yellow-300 whitespace-nowrap">₱{order.final_amount.toFixed(2)}</p>
+                          <button
+                            type="button"
+                            onClick={() => deleteArchivedOrder(order)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-red-700 text-white hover:bg-red-600 transition-all"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
         {activeTab === 'menu' && (
           <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
             <div className="flex items-center justify-between gap-3 mb-4">
@@ -1566,27 +2244,36 @@ export default function AdminPage() {
             ) : filteredMenuItems.length === 0 ? (
               <p className="text-gray-300 text-center py-6">No matching products.</p>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
                 {filteredMenuItems.map((item) => (
                   <div
                     key={item.id}
                     className="border border-yellow-500/20 rounded-lg p-4 bg-black/40 flex flex-col gap-4"
                   >
-                    <div className="grid grid-cols-1 sm:grid-cols-[112px_1fr] gap-4">
-                      <div className="w-full sm:w-28 sm:shrink-0">
-                        <div className="aspect-square rounded-lg overflow-hidden border border-yellow-500/20 bg-black/40">
+                    <div className="grid grid-cols-1 lg:grid-cols-[112px_1fr] gap-4">
+                      <div className="w-full lg:w-28 lg:shrink-0">
+                        <div className="relative aspect-square rounded-lg overflow-hidden border border-yellow-500/20 bg-black/40">
                           <img
                             src={item.image_url}
                             alt={item.name}
                             className="w-full h-full object-cover"
                           />
+                          <span
+                            className={`absolute top-1.5 left-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border backdrop-blur ${
+                              item.is_available
+                                ? 'bg-green-900/80 text-green-100 border-green-400/80'
+                                : 'bg-red-900/80 text-red-100 border-red-400/80'
+                            }`}
+                          >
+                            {item.is_available ? 'Available' : 'Unavailable'}
+                          </span>
                         </div>
                       </div>
 
                       <div className="min-w-0">
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
                           <div className="min-w-0">
-                            <p className="font-semibold text-yellow-300 leading-tight truncate">
+                            <p className="font-semibold text-yellow-300 leading-tight line-clamp-2 break-words">
                               {item.name}
                             </p>
                             <p className="text-xs text-gray-400 truncate">
@@ -1595,15 +2282,6 @@ export default function AdminPage() {
                                 : item.category}
                             </p>
                           </div>
-                          <span
-                            className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                              item.is_available
-                                ? 'bg-green-500/20 text-green-300 border border-green-500/60'
-                                : 'bg-red-500/20 text-red-300 border border-red-500/60'
-                            }`}
-                          >
-                            {item.is_available ? 'Available' : 'Unavailable'}
-                          </span>
                         </div>
 
                         <div className="mt-2 flex items-center justify-between gap-2">
@@ -1612,8 +2290,10 @@ export default function AdminPage() {
                           </span>
                         </div>
 
-                        <p className="mt-2 text-sm text-gray-300 line-clamp-2">
-                          {item.description}
+                        <p className="mt-2 text-sm text-gray-300 break-words">
+                          {item.description.length > 100
+                            ? `${item.description.slice(0, 100).trimEnd()}...`
+                            : item.description}
                         </p>
                       </div>
                     </div>
@@ -1799,67 +2479,94 @@ export default function AdminPage() {
           </section>
         )}
 
-        {activeTab === 'gcash' && (
+        {isMasterAdmin && activeTab === 'gcash' && (
           <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
             <div className="flex items-center gap-2 mb-4">
               <QrCode className="w-5 h-5 text-yellow-400" />
-              <h2 className="text-xl font-bold text-yellow-300">GCash payment QR</h2>
+              <h2 className="text-xl font-bold text-yellow-300">E-wallet Payments</h2>
             </div>
             <p className="text-sm text-gray-300 mb-2">
-              Ito ang QR na makikita ng customers kapag pipiliin nila ang <strong className="text-yellow-200">GCash</strong>{' '}
-              sa checkout. Pag magpalit ka ng larawan, awtomatik tatanggalin ang lumang file sa storage.
+              Set QR code and account number for <strong className="text-yellow-200">GCash, Maya, and PayPal</strong>.
+              Customers will see the selected wallet QR and account number in checkout.
             </p>
             <p className="text-xs text-gray-500 mb-6">
-              Seguridad: tanging <strong className="text-gray-400">active admin</strong> lang ang puwedeng mag-upload o
-              mag-delete sa bucket na ito (RLS + Storage policies). Hindi maaaring baguhin ng customer ang opisyal na QR
-              sa database.
+              Security: only <strong className="text-gray-400">active master admin</strong> can upload/delete wallet QR
+              and update account numbers.
             </p>
 
-            {gcashLoading ? (
+            {paymentsLoading ? (
               <div className="flex justify-center py-8">
                 <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
               </div>
             ) : (
-              <div className="flex flex-col md:flex-row gap-6 md:items-start">
-                <div className="flex-1 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-200 mb-2">
-                      Upload o palitan ang QR (PNG / JPG / WebP)
-                    </label>
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                      disabled={gcashUploading}
-                      onChange={(e) => handleGcashQrUpload(e.target.files?.[0] || null)}
-                      className="w-full text-sm text-gray-200"
-                    />
-                    {gcashUploading && (
-                      <p className="text-xs text-yellow-200/90 mt-2 flex items-center gap-2">
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        Ina-upload…
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {WALLET_METHODS.map((method) => {
+                  const setting = paymentSettings[method];
+                  const draft = paymentDrafts[method];
+                  const preview = paymentPreviewUrls[method];
+                  const isSaving = savingPaymentMethod === method;
+                  return (
+                    <div key={method} className="rounded-xl border border-yellow-500/20 bg-black/35 p-4">
+                      <h3 className="text-lg font-bold text-yellow-200">{method}</h3>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Updated: {new Date(setting.updated_at).toLocaleString()}
                       </p>
-                    )}
-                  </div>
-                  {gcashSettings?.updated_at && (
-                    <p className="text-xs text-gray-500">
-                      Huling update: {new Date(gcashSettings.updated_at).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-                <div className="shrink-0 rounded-xl border border-yellow-500/25 bg-black/40 p-4 text-center">
-                  <p className="text-xs font-semibold text-gray-400 mb-2">Preview (tulad sa customer)</p>
-                  {gcashPreviewUrl ? (
-                    <img
-                      src={gcashPreviewUrl}
-                      alt="GCash QR preview"
-                      className="w-48 h-48 object-contain rounded-lg mx-auto border border-white/10 bg-black/60"
-                    />
-                  ) : (
-                    <div className="w-48 h-48 mx-auto rounded-lg border border-dashed border-gray-600 flex items-center justify-center text-gray-500 text-sm px-2">
-                      Wala pang naka-set na QR. Mag-upload para lumitaw sa checkout.
+
+                      <div className="mt-3 rounded-lg border border-yellow-500/20 bg-black/40 p-3 text-center">
+                        {preview ? (
+                          <img
+                            src={preview}
+                            alt={`${method} QR preview`}
+                            className="w-40 h-40 object-contain rounded-lg mx-auto border border-white/10 bg-black/60"
+                          />
+                        ) : (
+                          <div className="w-40 h-40 mx-auto rounded-lg border border-dashed border-gray-600 flex items-center justify-center text-gray-500 text-xs px-2">
+                            No QR uploaded yet
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-3 space-y-3">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">E-wallet account number</label>
+                          <input
+                            type="text"
+                            value={draft.accountNumber}
+                            onChange={(e) =>
+                              setPaymentDrafts((prev) => ({
+                                ...prev,
+                                [method]: { ...prev[method], accountNumber: e.target.value },
+                              }))
+                            }
+                            className="w-full px-3 py-2 rounded-lg bg-black border border-yellow-500/35 text-white text-sm"
+                            placeholder={`Enter ${method} account number`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Upload QR image</label>
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                            onChange={(e) =>
+                              setPaymentDrafts((prev) => ({
+                                ...prev,
+                                [method]: { ...prev[method], file: e.target.files?.[0] || null },
+                              }))
+                            }
+                            className="w-full text-xs text-gray-200"
+                          />
+                        </div>
+                        <button
+                          onClick={() => savePaymentMethod(method)}
+                          disabled={isSaving}
+                          className="w-full px-3 py-2 rounded-lg bg-yellow-400 text-black font-semibold hover:bg-yellow-300 disabled:opacity-60 transition-all text-sm"
+                        >
+                          {isSaving ? 'Saving...' : `Save ${method}`}
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -1912,6 +2619,136 @@ export default function AdminPage() {
                 </div>
 
                 {/* Spin the Wheel game removed */}
+              </div>
+            )}
+          </section>
+        )}
+
+        {isMasterAdmin && activeTab === 'users' && (
+          <section className="bg-neutral-900 rounded-xl shadow-lg p-4 md:p-6 border border-yellow-500/30">
+            <div className="flex items-center gap-2 mb-4">
+              <Users className="w-5 h-5 text-yellow-400" />
+              <h2 className="text-xl font-bold text-yellow-300">User Management</h2>
+            </div>
+            <p className="text-sm text-gray-300 mb-4">
+              Master admin can view full customer details, temporarily suspend accounts, or permanently delete customer accounts.
+            </p>
+
+            {usersLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 text-yellow-400 animate-spin" />
+              </div>
+            ) : managedUsers.length === 0 ? (
+              <p className="text-gray-300 text-center py-6">No customer users found.</p>
+            ) : (
+              <div className="space-y-3">
+                {managedUsers.map((customer) => {
+                  const suspendedUntil = customer.suspended_until ? new Date(customer.suspended_until) : null;
+                  const isSuspended = !!suspendedUntil && suspendedUntil.getTime() > Date.now();
+                  return (
+                    <details
+                      key={customer.id}
+                      className="group rounded-xl border border-yellow-500/25 bg-black/35 p-3 open:border-yellow-400/50"
+                    >
+                      <summary className="list-none cursor-pointer">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-yellow-200 truncate">
+                              {customer.full_name || 'Unnamed user'}
+                            </p>
+                            <p className="text-xs text-gray-400 truncate">
+                              {customer.username ? `@${customer.username}` : 'No username'} • {customer.email || 'No email'}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-1 rounded-full text-[11px] font-semibold border ${
+                                isSuspended
+                                  ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                                  : 'bg-green-500/20 text-green-300 border-green-500/40'
+                              }`}
+                            >
+                              {isSuspended ? 'Suspended' : 'Active'}
+                            </span>
+                            <ChevronDown className="w-4 h-4 text-gray-400 transition-transform group-open:rotate-180" />
+                          </div>
+                        </div>
+                      </summary>
+
+                      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-lg border border-yellow-500/15 bg-black/30 p-3">
+                          <p className="text-[11px] text-gray-400 font-semibold">Full Name</p>
+                          <p className="text-sm text-gray-100 mt-1 break-words">{customer.full_name || '—'}</p>
+                        </div>
+                        <div className="rounded-lg border border-yellow-500/15 bg-black/30 p-3">
+                          <p className="text-[11px] text-gray-400 font-semibold">Username</p>
+                          <p className="text-sm text-gray-100 mt-1 break-words">{customer.username ? `@${customer.username}` : '—'}</p>
+                        </div>
+                        <div className="rounded-lg border border-yellow-500/15 bg-black/30 p-3">
+                          <p className="text-[11px] text-gray-400 font-semibold">Email</p>
+                          <p className="text-sm text-gray-100 mt-1 break-all">{customer.email || '—'}</p>
+                        </div>
+                        <div className="rounded-lg border border-yellow-500/15 bg-black/30 p-3">
+                          <p className="text-[11px] text-gray-400 font-semibold">Phone</p>
+                          <p className="text-sm text-gray-100 mt-1 break-words">{customer.phone || '—'}</p>
+                        </div>
+                        <div className="rounded-lg border border-yellow-500/15 bg-black/30 p-3 md:col-span-2">
+                          <p className="text-[11px] text-gray-400 font-semibold">Address</p>
+                          <p className="text-sm text-gray-100 mt-1 break-words">{customer.address || '—'}</p>
+                        </div>
+                        <div className="rounded-lg border border-yellow-500/15 bg-black/30 p-3">
+                          <p className="text-[11px] text-gray-400 font-semibold">Registered</p>
+                          <p className="text-sm text-gray-100 mt-1 break-words">{new Date(customer.created_at).toLocaleString()}</p>
+                        </div>
+                        <div className="rounded-lg border border-yellow-500/15 bg-black/30 p-3">
+                          <p className="text-[11px] text-gray-400 font-semibold">Suspension</p>
+                          <p className="text-sm text-gray-100 mt-1 break-words">
+                            {isSuspended && suspendedUntil
+                              ? `Until ${suspendedUntil.toLocaleString()}`
+                              : 'Not suspended'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {isSuspended ? (
+                          <button
+                            onClick={() => unsuspendUser(customer)}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-500 transition-all"
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            Unsuspend
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => suspendUser(customer, 24)}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-500 transition-all"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              Suspend 24h
+                            </button>
+                            <button
+                              onClick={() => suspendUser(customer, 24 * 7)}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-red-700 text-white hover:bg-red-600 transition-all"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              Suspend 7 days
+                            </button>
+                          </>
+                        )}
+
+                        <button
+                          onClick={() => deleteUserAccount(customer)}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-red-900 text-white hover:bg-red-800 transition-all"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Delete User
+                        </button>
+                      </div>
+                    </details>
+                  );
+                })}
               </div>
             )}
           </section>

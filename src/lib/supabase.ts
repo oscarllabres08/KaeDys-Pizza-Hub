@@ -22,9 +22,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 export type CustomerProfile = {
   id: string;
   full_name: string;
+  username?: string | null;
   phone: string;
   address: string | null;
   email?: string | null;
+  suspended_until?: string | null;
+  suspension_reason?: string | null;
   created_at: string;
 };
 
@@ -56,14 +59,25 @@ export type Order = {
   total_amount: number;
   discount_amount: number;
   final_amount: number;
-  payment_method: 'COD' | 'GCash';
+  payment_method: 'COD' | 'GCash' | 'Maya' | 'PayPal';
   payment_reference: string | null;
   payment_proof_url: string | null;
   status: 'pending' | 'confirmed' | 'preparing' | 'on_the_way' | 'completed' | 'cancelled';
   delivery_address: string;
   contact_phone: string;
   notes: string | null;
+  is_archived?: boolean;
+  archived_at?: string | null;
   created_at: string;
+  updated_at: string;
+};
+
+export type PaymentMethodCode = 'GCash' | 'Maya' | 'PayPal';
+
+export type PaymentMethodSetting = {
+  method: PaymentMethodCode;
+  qr_storage_path: string | null;
+  account_number: string | null;
   updated_at: string;
 };
 

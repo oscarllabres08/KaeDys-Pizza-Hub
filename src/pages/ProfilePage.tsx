@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { User, Package, Edit2, Save, X, Settings, Image as ImageIcon, ChevronDown, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, Order, OrderItem } from '../lib/supabase';
@@ -139,6 +139,15 @@ export default function ProfilePage() {
 
   const canDeleteOrder = (status: string) => status === 'completed' || status === 'cancelled';
 
+  const activeOrders = useMemo(
+    () => orders.filter((o) => !o.is_archived && o.status !== 'completed' && o.status !== 'cancelled'),
+    [orders]
+  );
+  const historyOrders = useMemo(
+    () => orders.filter((o) => !!o.is_archived || o.status === 'completed' || o.status === 'cancelled'),
+    [orders]
+  );
+
   const toggleSelectOrder = (orderId: string, status: string) => {
     if (!canDeleteOrder(status)) return;
     setSelectedOrderIds((prev) => {
@@ -152,7 +161,7 @@ export default function ProfilePage() {
   const selectAllDeletable = () => {
     setSelectedOrderIds(() => {
       const next = new Set<string>();
-      orders.forEach((o) => {
+      historyOrders.forEach((o) => {
         if (canDeleteOrder(o.status)) next.add(o.id);
       });
       return next;
@@ -364,6 +373,11 @@ export default function ProfilePage() {
                 <h2 className="text-2xl md:text-3xl font-black text-yellow-200 leading-tight">
                   {customerProfile.full_name}
                 </h2>
+                {customerProfile.username && (
+                  <p className="text-sm text-yellow-300/90 mt-1">
+                    @{customerProfile.username}
+                  </p>
+                )}
                 {user?.email && (
                   <p className="text-sm text-gray-300 mt-1 break-all">
                     {user.email}
@@ -402,6 +416,18 @@ export default function ProfilePage() {
                   {customerProfile.full_name}
                 </p>
               )}
+            </div>
+
+            <div className="rounded-2xl bg-black/40 border border-yellow-500/15 px-4 py-3">
+              <p className="text-[11px] font-semibold tracking-wide text-yellow-300/80 uppercase">
+                Username
+              </p>
+              <p className="mt-1 text-sm text-gray-100 break-all">
+                {customerProfile.username ? `@${customerProfile.username}` : '—'}
+              </p>
+              <p className="mt-1 text-[11px] text-gray-500">
+                Username cannot be edited.
+              </p>
             </div>
 
             <div className="rounded-2xl bg-black/40 border border-yellow-500/15 px-4 py-3">
@@ -607,10 +633,67 @@ export default function ProfilePage() {
 
           {ordersLoading ? (
             <p className="text-center text-gray-300">Loading orders...</p>
-          ) : orders.length === 0 ? (
-            <p className="text-center text-gray-300">No orders yet</p>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-yellow-200 mb-3">My Orders</h3>
+                {activeOrders.length === 0 ? (
+                  <p className="text-sm text-gray-400">No active orders.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {activeOrders.map((order) => (
+                      <div key={order.id} className="relative">
+                        <div className="border border-yellow-500/20 rounded-lg p-4 hover:shadow-md transition-all bg-black/40">
+                          <div className="flex justify-between items-start mb-3 gap-3">
+                            <div>
+                              <p className="text-sm text-gray-300">Order #{order.id.slice(0, 8)}</p>
+                              <p className="text-xs text-gray-500">
+                                {new Date(order.created_at).toLocaleDateString()} at{' '}
+                                {new Date(order.created_at).toLocaleTimeString()}
+                              </p>
+                            </div>
+                            <span className={`px-3 py-1 rounded text-xs font-semibold ${getStatusColor(order.status)}`}>
+                              {getStatusText(order.status)}
+                            </span>
+                          </div>
+
+                          <div className="mb-3">
+                            {order.order_items.map((item) => (
+                              <p key={item.id} className="text-sm text-gray-200">
+                                {item.quantity}x {item.menu_item_name} - ₱{item.subtotal.toFixed(2)}
+                              </p>
+                            ))}
+                          </div>
+
+                          <div className="border-t border-yellow-500/20 pt-3">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-gray-300">Subtotal:</span>
+                              <span className="font-semibold text-yellow-300">₱{order.total_amount.toFixed(2)}</span>
+                            </div>
+                            {order.discount_amount > 0 && (
+                              <div className="flex justify-between text-sm text-green-400">
+                                <span>Discount:</span>
+                                <span className="font-semibold">-₱{order.discount_amount.toFixed(2)}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between text-lg font-bold mt-2 text-yellow-300">
+                              <span>Total:</span>
+                              <span className="text-white">₱{order.final_amount.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-lg font-bold text-yellow-200 mb-3">Order History</h3>
+                {historyOrders.length === 0 ? (
+                  <p className="text-sm text-gray-400">No order history yet.</p>
+                ) : (
+                  <div className="space-y-4">
               <div className="flex flex-col gap-3 rounded-xl border border-yellow-500/15 bg-black/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm text-gray-200">
                   <span className="font-semibold text-yellow-300">{selectedOrderIds.size}</span>{' '}
@@ -643,7 +726,7 @@ export default function ProfilePage() {
                   </button>
                 </div>
               </div>
-              {orders.map((order) => (
+              {historyOrders.map((order) => (
                 <div key={order.id} className="relative">
                 <div
                   className="border border-yellow-500/20 rounded-lg p-4 hover:shadow-md transition-all bg-black/40"
@@ -731,6 +814,9 @@ export default function ProfilePage() {
                 </div>
                 </div>
               ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

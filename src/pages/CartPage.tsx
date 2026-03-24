@@ -11,6 +11,8 @@ type CartPageProps = {
 };
 
 export default function CartPage({ onNavigate, startInCheckout = false }: CartPageProps) {
+  type WalletMethod = 'GCash' | 'Maya' | 'PayPal';
+  const WALLET_METHODS: WalletMethod[] = ['GCash', 'Maya', 'PayPal'];
   const {
     cart,
     updateQuantity,
@@ -27,11 +29,16 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
   const [showCheckout, setShowCheckout] = useState(false);
   const [buyNowCheckoutStep, setBuyNowCheckoutStep] = useState<'review' | 'details'>('review');
   const [loading, setLoading] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'COD' | 'GCash'>('COD');
+  const [paymentMethod, setPaymentMethod] = useState<'COD' | WalletMethod>('COD');
   const [paymentReference, setPaymentReference] = useState('');
   const [paymentProof, setPaymentProof] = useState<File | null>(null);
-  /** Official GCash QR from `site_settings` + Storage; falls back to `/QR.png` */
-  const [gcashQrSrc, setGcashQrSrc] = useState<string>('/QR.png');
+  const [walletSettings, setWalletSettings] = useState<
+    Record<WalletMethod, { qrSrc: string | null; accountNumber: string | null }>
+  >({
+    GCash: { qrSrc: '/QR.png', accountNumber: null },
+    Maya: { qrSrc: null, accountNumber: null },
+    PayPal: { qrSrc: null, accountNumber: null },
+  });
   const [notes, setNotes] = useState('');
   const [deliveryName, setDeliveryName] = useState('');
   const [deliveryPhone, setDeliveryPhone] = useState('');
@@ -111,49 +118,68 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
 
   const deliveryFormVisible = showBuyNowDeliveryForm || isCartCheckoutForm;
 
-  const loadGcashQr = useCallback(async () => {
+  const loadWalletSettings = useCallback(async () => {
     try {
       const { data, error } = await supabase
-        .from('site_settings')
-        .select('gcash_qr_storage_path, updated_at')
-        .eq('id', 1)
-        .maybeSingle();
+        .from('payment_method_settings')
+        .select('method, qr_storage_path, account_number, updated_at')
+        .in('method', WALLET_METHODS);
 
       if (error) throw error;
-      const path = data?.gcash_qr_storage_path;
-      if (!path) {
-        setGcashQrSrc('/QR.png');
-        return;
+      const next: Record<WalletMethod, { qrSrc: string | null; accountNumber: string | null }> = {
+        GCash: { qrSrc: '/QR.png', accountNumber: null },
+        Maya: { qrSrc: null, accountNumber: null },
+        PayPal: { qrSrc: null, accountNumber: null },
+      };
+      for (const row of data || []) {
+        const method = row.method as WalletMethod;
+        const qrPath = row.qr_storage_path;
+        const account = row.account_number ?? null;
+        if (!qrPath) {
+          next[method] = {
+            qrSrc: method === 'GCash' ? '/QR.png' : null,
+            accountNumber: account,
+          };
+          continue;
+        }
+        const { data: pub } = supabase.storage.from('payment-qr').getPublicUrl(qrPath);
+        const v = row.updated_at ? `?v=${encodeURIComponent(row.updated_at)}` : '';
+        next[method] = {
+          qrSrc: `${pub.publicUrl}${v}`,
+          accountNumber: account,
+        };
       }
-      const { data: pub } = supabase.storage.from('gcash-qr').getPublicUrl(path);
-      const v = data?.updated_at ? `?v=${encodeURIComponent(data.updated_at)}` : '';
-      setGcashQrSrc(`${pub.publicUrl}${v}`);
+      setWalletSettings(next);
     } catch (e) {
-      console.warn('Could not load GCash QR from site_settings; using fallback.', e);
-      setGcashQrSrc('/QR.png');
+      console.warn('Could not load payment method settings; using fallback.', e);
+      setWalletSettings({
+        GCash: { qrSrc: '/QR.png', accountNumber: null },
+        Maya: { qrSrc: null, accountNumber: null },
+        PayPal: { qrSrc: null, accountNumber: null },
+      });
     }
   }, []);
 
   useEffect(() => {
-    void loadGcashQr();
-  }, [loadGcashQr]);
+    void loadWalletSettings();
+  }, [loadWalletSettings]);
 
   useEffect(() => {
-    if (paymentMethod !== 'GCash') return;
+    if (paymentMethod === 'COD') return;
     const channel = supabase
-      .channel('cart-gcash-qr')
+      .channel('cart-payment-settings')
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'site_settings', filter: 'id=eq.1' },
+        { event: '*', schema: 'public', table: 'payment_method_settings' },
         () => {
-          void loadGcashQr();
+          void loadWalletSettings();
         }
       )
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [paymentMethod, loadGcashQr]);
+  }, [paymentMethod, loadWalletSettings]);
 
   useEffect(() => {
     if (startInCheckout) setBuyNowCheckoutStep('review');
@@ -200,9 +226,9 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
       return;
     }
 
-    if (paymentMethod === 'GCash' && (!paymentReference || !paymentProof)) {
+    if (paymentMethod !== 'COD' && (!paymentReference || !paymentProof)) {
       openModal({
-        title: 'GCash Payment Required',
+        title: 'E-wallet Payment Required',
         message: 'Please provide the reference number and upload proof of payment.',
         variant: 'info',
       });
@@ -620,27 +646,86 @@ export default function CartPage({ onNavigate, startInCheckout = false }: CartPa
                     >
                       GCash
                     </p>
-                    <p className="text-[11px] text-gray-400 mt-1">
-                      Scan QR, then upload proof.
-                    </p>
+                    <p className="text-[11px] text-gray-400 mt-1">Scan QR or use account number.</p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('Maya')}
+                  className={`group flex items-start gap-3 rounded-2xl border px-4 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 ${
+                    paymentMethod === 'Maya'
+                      ? 'border-yellow-400 bg-yellow-500/10 shadow-[0_0_0_1px_rgba(250,204,21,0.35)]'
+                      : 'border-white/10 bg-black/30 hover:border-yellow-500/60 hover:bg-black/40'
+                  }`}
+                >
+                  <div
+                    className={`mt-0.5 h-8 w-8 rounded-full border text-xs font-extrabold flex items-center justify-center ${
+                      paymentMethod === 'Maya'
+                        ? 'border-yellow-400 text-yellow-300 bg-yellow-500/10'
+                        : 'border-gray-500 text-gray-300 bg-black/40'
+                    }`}
+                  >
+                    M
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-sm font-semibold ${paymentMethod === 'Maya' ? 'text-yellow-200' : 'text-gray-100'}`}>Maya</p>
+                    <p className="text-[11px] text-gray-400 mt-1">Scan QR or use account number.</p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('PayPal')}
+                  className={`group flex items-start gap-3 rounded-2xl border px-4 py-3 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 ${
+                    paymentMethod === 'PayPal'
+                      ? 'border-yellow-400 bg-yellow-500/10 shadow-[0_0_0_1px_rgba(250,204,21,0.35)]'
+                      : 'border-white/10 bg-black/30 hover:border-yellow-500/60 hover:bg-black/40'
+                  }`}
+                >
+                  <div
+                    className={`mt-0.5 h-8 w-8 rounded-full border text-xs font-extrabold flex items-center justify-center ${
+                      paymentMethod === 'PayPal'
+                        ? 'border-yellow-400 text-yellow-300 bg-yellow-500/10'
+                        : 'border-gray-500 text-gray-300 bg-black/40'
+                    }`}
+                  >
+                    P
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-sm font-semibold ${paymentMethod === 'PayPal' ? 'text-yellow-200' : 'text-gray-100'}`}>PayPal</p>
+                    <p className="text-[11px] text-gray-400 mt-1">Scan QR or use account number.</p>
                   </div>
                 </button>
               </div>
             </div>
 
-            {paymentMethod === 'GCash' && (
+            {paymentMethod !== 'COD' && (
               <div className="mb-6 p-4 bg-black/40 rounded-xl border border-yellow-500/30">
                 <div className="text-center mb-4">
                   <p className="font-semibold text-yellow-300 mb-2">
-                    Scan QR Code to Pay
+                    {paymentMethod} - Scan QR Code to Pay
                   </p>
                   <div className="bg-black/60 p-4 rounded-xl inline-block border border-white/10">
-                    <img
-                      src={gcashQrSrc}
-                      alt="GCash QR Code"
-                      className="w-48 h-48 object-contain rounded-lg"
-                    />
+                    {walletSettings[paymentMethod as WalletMethod]?.qrSrc ? (
+                      <img
+                        src={walletSettings[paymentMethod as WalletMethod].qrSrc || ''}
+                        alt={`${paymentMethod} QR Code`}
+                        className="w-48 h-48 object-contain rounded-lg"
+                      />
+                    ) : (
+                      <div className="w-48 h-48 rounded-lg border border-dashed border-gray-600 flex items-center justify-center text-gray-500 text-sm px-3">
+                        No QR uploaded yet for {paymentMethod}.
+                      </div>
+                    )}
                   </div>
+                </div>
+
+                <div className="mb-4 rounded-lg border border-yellow-500/20 bg-black/30 px-3 py-2">
+                  <p className="text-xs font-semibold text-gray-400">E-wallet account number</p>
+                  <p className="text-sm text-yellow-200 mt-1 break-words">
+                    {walletSettings[paymentMethod as WalletMethod]?.accountNumber || 'No account number set yet.'}
+                  </p>
                 </div>
 
                 <div className="mb-4">

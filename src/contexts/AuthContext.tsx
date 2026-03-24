@@ -15,7 +15,7 @@ type AuthContextType = {
     userData: Omit<CustomerProfile, 'id' | 'created_at'>,
     isAdminSignUp?: boolean
   ) => Promise<{ requiresAdminApproval: boolean; isMasterAdmin: boolean }>;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (identifier: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   isAdmin: boolean;
 };
@@ -114,10 +114,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (adminInsertError) throw adminInsertError;
       } else {
         // Customer sign-up
+        const normalizedUsername = (userData.username || '').trim().toLowerCase();
         const { error: customerError } = await supabase.from('customer_profiles').insert([
           {
             id: data.user.id,
             full_name: userData.full_name,
+            username: normalizedUsername,
             phone: userData.phone,
             address: userData.address ?? null,
             email,
@@ -144,18 +146,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { requiresAdminApproval, isMasterAdmin };
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (identifier: string, password: string) => {
+    const cleaned = identifier.trim();
+    const isEmailInput = cleaned.includes('@');
+    let emailForLogin = cleaned;
+
+    if (!isEmailInput) {
+      const { data: resolvedEmail, error: usernameErr } = await supabase.rpc(
+        'resolve_customer_login_email',
+        { p_identifier: cleaned }
+      );
+      if (usernameErr) throw usernameErr;
+      if (!resolvedEmail) {
+        throw new Error('Invalid username/email or password.');
+      }
+      emailForLogin = resolvedEmail;
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: emailForLogin,
       password,
     });
 
-    if (error) throw error;
+    if (error) throw new Error('Invalid username/email or password.');
 
     // Ensure UI updates immediately after login
     const { data: sessionData } = await supabase.auth.getSession();
     if (sessionData.session?.user?.id) {
-      await fetchProfiles(sessionData.session.user.id);
+      const userId = sessionData.session.user.id;
+      const { data: me } = await supabase
+        .from('customer_profiles')
+        .select('suspended_until')
+        .eq('id', userId)
+        .maybeSingle();
+
+      const suspendedUntil = me?.suspended_until ? new Date(me.suspended_until) : null;
+      if (suspendedUntil && suspendedUntil.getTime() > Date.now()) {
+        await supabase.auth.signOut();
+        throw new Error(`Your account is temporarily suspended until ${suspendedUntil.toLocaleString()}.`);
+      }
+
+      await fetchProfiles(userId);
     }
   };
 
