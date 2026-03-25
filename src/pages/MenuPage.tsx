@@ -216,27 +216,34 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
         {loading ? (
           <div className="text-center py-10 text-gray-300">Loading menu...</div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6 items-stretch">
             {filteredItems.map((item) => {
               const available = isItemAvailable(item);
               const quantity = quantities[item.id] ?? 1;
+              const openPreview = () => setPreviewItem(item);
               return (
                 <div
                   key={item.id}
-                  className="bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col"
+                  role="button"
+                  tabIndex={0}
+                  onClick={openPreview}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openPreview();
+                    }
+                  }}
+                  aria-label={`View details: ${item.name}`}
+                  className="group bg-neutral-900 rounded-lg shadow-md overflow-hidden border border-yellow-500/20 flex flex-col h-full cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
                 >
-                  <button
-                    type="button"
-                    className="w-full px-3 pt-3"
-                    onClick={() => setPreviewItem(item)}
-                  >
-                    <div className="relative mx-auto aspect-square w-36 sm:w-40 md:w-44 overflow-hidden rounded-lg">
+                  <div className="w-full shrink-0 pointer-events-none">
+                    <div className="relative w-full aspect-[5/4] overflow-hidden">
                       <img
                         src={item.image_url}
-                        alt={item.name}
-                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-110"
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
                       />
-                      <div className="absolute top-2 right-2 bg-yellow-400 text-black px-3 py-1 rounded-full font-bold">
+                      <div className="absolute top-1.5 right-1.5 bg-yellow-400 text-black px-2 py-0.5 text-xs rounded-full font-bold">
                         ₱{item.price}
                       </div>
                       {!available && (
@@ -247,21 +254,28 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
                         </div>
                       )}
                     </div>
-                  </button>
-                  <div className="p-3 flex-1 flex flex-col">
-                    <h3 className="text-sm font-bold text-yellow-300 mb-0.5 leading-snug line-clamp-2">
+                  </div>
+                  <div className="p-2 flex-1 flex flex-col min-h-0">
+                    <h3 className="text-xs sm:text-sm font-bold text-yellow-300 mb-0.5 leading-tight line-clamp-2">
                       {item.name}
                     </h3>
-                    <p className="text-[11px] text-gray-400 mb-1 leading-snug">
+                    <p className="text-[10px] text-gray-400 mb-1 leading-tight line-clamp-1 shrink-0">
                       {item.category === 'Others' ? item.custom_category || 'Others' : item.category}
                       {item.subcategory ? ` > ${item.subcategory}` : ''}
                     </p>
-                    <p className="text-gray-300 text-xs mb-2 leading-snug line-clamp-2">
+                    <p
+                      title={item.description}
+                      className="text-gray-300 text-[11px] leading-snug mb-1.5 line-clamp-2 overflow-hidden text-ellipsis break-words shrink-0"
+                    >
                       {item.description}
                     </p>
                     {available ? (
                       <>
-                        <div className="mb-2 flex items-center justify-between gap-0">
+                        <div
+                          className="mb-1.5 flex items-center justify-between gap-0 mt-auto pointer-events-auto"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
                           <span className="text-xs text-gray-300">Quantity</span>
                           <div className="flex items-center gap-1.5 bg-black/40 rounded-full px-1 py-0.1 border border-yellow-500/40">
                             <button
@@ -293,11 +307,15 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
                             </button>
                           </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div
+                          className="flex gap-2 pointer-events-auto"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
                           <button
                             type="button"
                             onClick={() => handleAddToCart(item)}
-                            className={`flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold transition-all px-2 py-1.4  leading-tight text-center whitespace-normal line-clamp-2 ${
+                            className={`flex-1 rounded-md text-xs sm:text-sm font-semibold transition-all px-2.5 py-1.5 leading-tight text-center whitespace-normal line-clamp-2 ${
                               addedItems.has(item.id)
                                 ? 'bg-green-500 text-white'
                                 : 'bg-yellow-400 text-black hover:bg-yellow-300'
@@ -308,7 +326,7 @@ export default function MenuPage({ onNavigate }: MenuPageProps) {
                           <button
                             type="button"
                             onClick={() => handleBuyNow(item)}
-                            className="flex-1 rounded-md text-[10px] sm:text-[11px] font-semibold border border-yellow-400 text-yellow-300 hover:bg-yellow-400/10 transition-all px-2 py-1.5 leading-tight text-center whitespace-normal line-clamp-2"
+                            className="flex-1 rounded-md text-xs sm:text-sm font-semibold border border-yellow-400 text-yellow-300 hover:bg-yellow-400/10 transition-all px-2 py-.5 leading-tight text-center whitespace-normal line-clamp-2"
                           >
                             Buy Now
                           </button>
